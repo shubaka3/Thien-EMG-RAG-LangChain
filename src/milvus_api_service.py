@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Import components from created files
 from src.milvus_langchain import MilvusService
-from src.load_file import get_embedding_model, load_documents  # load_documents not used directly
+from src.load_file import get_embedding_model # load_documents not used directly
 
 app = Flask(__name__)
 swagger = Swagger(app)
@@ -37,6 +37,7 @@ try:
     logging.info(f"Milvus collection '{MILVUS_COLLECTION_NAME}' ensured to exist.")
 except Exception as e:
     logging.error(f"Failed to ensure Milvus collection '{MILVUS_COLLECTION_NAME}' exists: {e}")
+    # It's critical to exit or handle gracefully if the core service dependency fails at startup
     exit(1)
 
 @app.route('/milvus/collections/create', methods=['POST'])
@@ -109,6 +110,73 @@ def delete_milvus_collection():
     else:
         return jsonify({'status': 'error', 'message': f"Failed to delete collection '{collection_name}' or it does not exist."}), 500
 
+# Endpoint to list all Milvus collections
+@app.route('/milvus/collections/list', methods=['GET'])
+@swag_from({
+    'tags': ['Milvus Collections'],
+    'responses': {
+        200: {'description': 'List of collections returned'}
+    }
+})
+def list_milvus_collections():
+    try:
+        collections = milvus_service.list_collections()
+        return jsonify({'status': 'success', 'collections': collections})
+    except Exception as e:
+        logging.error(f"Error listing Milvus collections: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"Failed to list collections: {e}"}), 500
+
+# Endpoint to describe a Milvus collection
+@app.route('/milvus/collections/describe', methods=['GET'])
+@swag_from({
+    'tags': ['Milvus Collections'],
+    'parameters': [
+        {'name': 'collection_name', 'in': 'query', 'type': 'string', 'required': True, 'description': 'Name of the collection to describe'}
+    ],
+    'responses': {
+        200: {'description': 'Collection description returned'}
+    }
+})
+def describe_milvus_collection():
+    collection_name = request.args.get('collection_name')
+    if not collection_name:
+        return jsonify({'error': 'Collection name is required.'}), 400
+    try:
+        description = milvus_service.describe_collection(collection_name)
+        if description:
+            return jsonify({'status': 'success', 'description': description})
+        else:
+            return jsonify({'status': 'error', 'message': f"Collection '{collection_name}' not found or could not be described."}), 404
+    except Exception as e:
+        logging.error(f"Error describing Milvus collection '{collection_name}': {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"Failed to describe collection '{collection_name}': {e}"}), 500
+
+# Endpoint to get stats for a Milvus collection
+@app.route('/milvus/collections/stats', methods=['GET'])
+@swag_from({
+    'tags': ['Milvus Collections'],
+    'parameters': [
+        {'name': 'collection_name', 'in': 'query', 'type': 'string', 'required': True, 'description': 'Name of the collection to get stats for'}
+    ],
+    'responses': {
+        200: {'description': 'Collection statistics returned'}
+    }
+})
+def get_milvus_collection_stats():
+    collection_name = request.args.get('collection_name')
+    if not collection_name:
+        return jsonify({'error': 'Collection name is required.'}), 400
+    try:
+        stats = milvus_service.get_collection_stats(collection_name)
+        if stats:
+            return jsonify({'status': 'success', 'stats': stats})
+        else:
+            return jsonify({'status': 'error', 'message': f"Collection '{collection_name}' not found or could not get stats."}), 404
+    except Exception as e:
+        logging.error(f"Error getting stats for Milvus collection '{collection_name}': {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"Failed to get stats for collection '{collection_name}': {e}"}), 500
+
+
 @app.route('/milvus/documents/insert', methods=['POST'])
 @swag_from({
     'tags': ['Milvus Documents'],
@@ -158,11 +226,17 @@ def insert_milvus_documents():
         else:
             return jsonify({'error': 'Each document must have "page_content".'}), 400
 
-    inserted_ids = milvus_service.insert_documents(collection_name, langchain_documents)
-    if inserted_ids:
-        return jsonify({'status': 'success', 'message': f"Inserted {len(inserted_ids)} documents.", 'ids': inserted_ids})
-    else:
-        return jsonify({'status': 'error', 'message': "Failed to insert documents."}), 500
+    try:
+        inserted_ids = milvus_service.add_documents(collection_name, langchain_documents)
+        if inserted_ids:
+            return jsonify({'status': 'success', 'message': f"Inserted {len(inserted_ids)} documents.", 'ids': inserted_ids})
+        else:
+            # If add_documents returns an empty list but no exception, it means
+            # an internal error occurred that was caught and logged within MilvusService.
+            return jsonify({'status': 'error', 'message': "Failed to insert documents. Check Milvus API service logs for details."}), 500
+    except Exception as e:
+        logging.error(f"Error in insert_milvus_documents endpoint: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"Internal server error during document insertion: {e}"}), 500
 
 @app.route('/milvus/documents/search', methods=['POST'])
 @swag_from({
@@ -221,7 +295,7 @@ def search_milvus_documents():
         200: {'description': 'Document retrieved'}
     }
 })
-def get_milvus_document_by_id(doc_id):
+def get_milvus_document_by_id(doc_id): # doc_id is now correctly passed as a function argument
     collection_name = request.args.get('collection_name', MILVUS_COLLECTION_NAME)
     doc = milvus_service.get_document_by_id(collection_name, doc_id)
     if doc:
@@ -312,8 +386,18 @@ def delete_milvus_documents_by_source():
 })
 def show_all_milvus_data():
     collection_name = request.args.get('collection_name', MILVUS_COLLECTION_NAME)
-    limit = int(request.args.get('limit', 100))
-    source_counts = milvus_service.show_all_data(collection_name, limit)
+    # Correctly use get_all_documents and then count sources
+    all_docs = milvus_service.get_all_documents(collection_name)
+    source_counts = {}
+    for doc in all_docs:
+        source = doc.metadata.get('source')
+        if source:
+            source_counts[source] = source_counts.get(source, 0) + 1
+    
+    # The 'limit' parameter for show_all_data typically means limiting the number of sources returned,
+    # not the number of documents fetched. For now, we return all source counts.
+    # If a strict limit on sources is needed, additional logic would be required here.
+    
     return jsonify({'status': 'success', 'source_counts': source_counts})
 
 @app.route('/milvus/data/get_all_documents', methods=['GET'])
@@ -330,7 +414,71 @@ def show_all_milvus_data():
 def get_all_milvus_documents():
     collection_name = request.args.get('collection_name', MILVUS_COLLECTION_NAME)
     limit = int(request.args.get('limit', 100))
-    docs = milvus_service.get_all_documents(collection_name, limit)
+    # MilvusService.get_all_documents fetches all documents.
+    # We apply the limit here for the API response.
+    docs = milvus_service.get_all_documents(collection_name)
+    
+    json_docs = [{'page_content': d.page_content, 'metadata': d.metadata} for d in docs[:limit]]
+    return jsonify({'status': 'success', 'documents': json_docs})
+
+# NEW: Endpoint to get documents by source with limit
+@app.route('/milvus/data/get_by_source', methods=['GET'])
+@swag_from({
+    'tags': ['Milvus Data'],
+    'parameters': [
+        {'name': 'collection_name', 'in': 'query', 'type': 'string', 'required': True, 'description': 'Name of the collection'},
+        {'name': 'source', 'in': 'query', 'type': 'string', 'required': True, 'description': 'Source (filename) to filter by'},
+        {'name': 'limit', 'in': 'query', 'type': 'integer', 'required': False, 'default': 100, 'description': 'Maximum number of documents to return'}
+    ],
+    'responses': {
+        200: {'description': 'Documents filtered by source returned'}
+    }
+})
+def get_milvus_data_by_source():
+    collection_name = request.args.get('collection_name', MILVUS_COLLECTION_NAME)
+    source = request.args.get('source')
+    limit = int(request.args.get('limit', 100))
+
+    if not source:
+        return jsonify({'error': 'Source name is required.'}), 400
+
+    docs = milvus_service.get_documents_by_source(collection_name, source, limit)
+    json_docs = [{'page_content': d.page_content, 'metadata': d.metadata} for d in docs]
+    return jsonify({'status': 'success', 'documents': json_docs})
+
+# NEW: Endpoint to search documents by metadata filters
+@app.route('/milvus/documents/search_by_metadata', methods=['POST'])
+@swag_from({
+    'tags': ['Milvus Documents'],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'collection_name': {'type': 'string'},
+                    'metadata_filters': {'type': 'object', 'description': 'Dictionary of metadata key-value pairs to filter by'},
+                    'limit': {'type': 'integer', 'default': 100, 'description': 'Maximum number of documents to return'}
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {'description': 'Documents filtered by metadata returned'}
+    }
+})
+def search_milvus_documents_by_metadata():
+    data = request.json
+    collection_name = data.get('collection_name', MILVUS_COLLECTION_NAME)
+    metadata_filters = data.get('metadata_filters')
+    limit = int(data.get('limit', 100))
+
+    if not metadata_filters or not isinstance(metadata_filters, dict):
+        return jsonify({'error': 'A dictionary of metadata_filters is required.'}), 400
+
+    docs = milvus_service.search_by_metadata(collection_name, metadata_filters, limit)
     json_docs = [{'page_content': d.page_content, 'metadata': d.metadata} for d in docs]
     return jsonify({'status': 'success', 'documents': json_docs})
 

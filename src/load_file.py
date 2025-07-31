@@ -14,20 +14,20 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, JSONLoader, UnstructuredMarkdownLoader
 from langchain_text_splitters import MarkdownHeaderTextSplitter, CharacterTextSplitter
 
-# Load environment variables
+# Tải biến môi trường
 load_dotenv('./.env')
 
-# New libraries for OCR
+# Thư viện mới cho OCR
 try:
     import fitz # PyMuPDF
     from PIL import Image
     import pytesseract
-    # Configure tesseract path if needed from .env
+    # Cấu hình đường dẫn tesseract nếu cần từ .env
     tesseract_cmd_path = os.getenv("TESSERACT_CMD_PATH")
     if tesseract_cmd_path:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd_path
 except ImportError:
-    print("PyMuPDF, Pillow, or pytesseract not found. OCR functionality will be limited.")
+    print("Không tìm thấy PyMuPDF, Pillow hoặc pytesseract. Chức năng OCR sẽ bị hạn chế.")
     fitz = None
     Image = None
     pytesseract = None
@@ -39,203 +39,126 @@ _EProviders:Dict[Literal['openai', 'ollama'], Type[Embeddings]] = {
 
 def get_embedding_model(provider:Literal['openai', 'ollama'], model:str, **kwargs) -> Embeddings:
     """
-    Retrieves the embedding model based on the provider and model name.
+    Truy xuất mô hình nhúng dựa trên nhà cung cấp và tên mô hình.
 
     Args:
-        provider (Literal['openai', 'ollama']): The embedding model provider ('openai' or 'ollama').
-        model (str): The name of the embedding model.
-        **kwargs: Additional arguments for the embedding model.
+        provider (Literal['openai', 'ollama']): Nhà cung cấp mô hình nhúng ('openai' hoặc 'ollama').
+        model (str): Tên của mô hình nhúng.
+        **kwargs: Các đối số bổ sung cho mô hình nhúng.
 
     Returns:
-        Embeddings: An instance of the embedding model.
+        Embeddings: Một thể hiện của mô hình nhúng.
     """
     return _EProviders[provider](model=model, **kwargs)
 
 def _extract_text_from_pdf_with_ocr(pdf_path: str) -> List[str]:
     """
-    Extracts text from PDF, using OCR if text cannot be extracted directly.
+    Trích xuất văn bản từ PDF, sử dụng OCR nếu không thể trích xuất văn bản trực tiếp.
 
     Args:
-        pdf_path (str): Path to the PDF file.
+        pdf_path (str): Đường dẫn đến tệp PDF.
 
     Returns:
-        List[str]: List of text strings, each corresponding to a page.
+        List[str]: Danh sách các chuỗi văn bản, mỗi chuỗi tương ứng với một trang.
     """
     if not fitz or not Image or not pytesseract:
-        print("OCR dependencies (PyMuPDF, Pillow, pytesseract) are not fully installed. Skipping OCR for PDF.")
+        print("Các phụ thuộc OCR (PyMuPDF, Pillow, pytesseract) chưa được cài đặt đầy đủ. Bỏ qua OCR cho PDF.")
         loader = PyPDFLoader(pdf_path)
-        return [doc.page_content for doc in loader.load()] # Fallback to direct text extraction
+        return [doc.page_content for doc in loader.load()] # Quay lại trích xuất văn bản trực tiếp
 
     doc = fitz.open(pdf_path)
     text_per_page = []
     for page_num in range(doc.page_count):
         page = doc.load_page(page_num)
         text = page.get_text()
-        if not text.strip():  # If no text or only whitespace, try OCR
-            print(f"No text found on page {page_num + 1} of {os.path.basename(pdf_path)}. Attempting OCR...")
+        if not text.strip():  # Nếu không có văn bản hoặc chỉ có khoảng trắng, thử OCR
+            print(f"Không tìm thấy văn bản trên trang {page_num + 1} của {os.path.basename(pdf_path)}. Đang thử OCR...")
             pix = page.get_pixmap()
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            ocr_text = pytesseract.image_to_string(img, lang='vie+eng') # Try both Vietnamese and English
+            ocr_text = pytesseract.image_to_string(img, lang='vie+eng') # Thử cả tiếng Việt và tiếng Anh
             text_per_page.append(ocr_text)
         else:
             text_per_page.append(text)
     return text_per_page
 
-
-def load_documents(path:str) -> List[Document]:
+def process_single_document(file_path: str) -> List[Document]:
     """
-    Loads documents from a given directory, including OCR support for PDFs.
-    This function processes all files in the directory.
-
-    Args:
-        path (str): Path to the directory containing document files.
-
-    Returns:
-        List[Document]: List of loaded Langchain Document objects.
-    """
-    documents:list[Document] = []
-    
-    # Get chunking parameters from environment variables
-    chunk_size = int(os.getenv('CHUNK_SIZE', 1000))
-    chunk_overlap = int(os.getenv('CHUNK_OVERLAP', 200))
-    text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-
-    for filename in os.listdir(path):
-        filepath = os.path.join(path, filename)
-        if os.path.isfile(filepath): # Ensure it's a file, not a directory
-            print(f"Processing file: {filename}")
-            if filename.endswith('.pdf'):
-                try:
-                    page_contents = _extract_text_from_pdf_with_ocr(filepath)
-                    # Create Langchain Documents from each page
-                    for i, content in enumerate(page_contents):
-                        if content.strip(): # Only add pages with content
-                            docs_from_page = text_splitter.split_text(content)
-                            for chunk in docs_from_page:
-                                documents.append(Document(
-                                    page_content=chunk, 
-                                    metadata={
-                                        'source': filename, 
-                                        'content_type': 'application/pdf', 
-                                        'page': i + 1, 
-                                        'total_pages': len(page_contents)
-                                    }
-                                ))
-                except Exception as e:
-                    print(f"Error processing PDF {filename} with OCR: {e}. Skipping or falling back.")
-                    # Fallback to PyPDFLoader if OCR fails
-                    try:
-                        loader = PyPDFLoader(filepath)
-                        fdocs = [
-                            Document(page_content=doc.page_content, metadata={'source': filename, 'content_type': 'application/pdf', 'page': doc.metadata.get('page', 1), 'total_pages': doc.metadata.get('total_pages', 1)})
-                            for doc in loader.load_and_split(text_splitter=text_splitter)
-                        ]
-                        documents.extend(fdocs)
-                    except Exception as e_fallback:
-                        print(f"Failed to load PDF {filename} even with fallback: {e_fallback}. Skipping.")
-
-            elif filename.endswith('.md'):
-                loader = UnstructuredMarkdownLoader(filepath)
-                fdocs = [
-                    Document(page_content=doc.page_content, metadata={'source': filename, 'content_type': 'text/markdown', 'page': doc.metadata.get('page', 1), 'total_pages': doc.metadata.get('total_pages', 1)})
-                    for doc in loader.load_and_split(text_splitter=text_splitter)
-                ]
-                documents.extend(fdocs)
-            elif filename.endswith('.txt'):
-                with open(filepath, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                # Split .txt file content
-                docs_from_txt = text_splitter.split_text(content)
-                for chunk in docs_from_txt:
-                    documents.append(Document(page_content=chunk, metadata={'source': filename, 'content_type': 'text/plain', 'page': 1, 'total_pages': 1}))
-            else:
-                print(f"Unsupported file type: {filename}. Skipping.")
-                    
-    return documents
-
-def process_single_document(filepath: str) -> List[Document]:
-    """
-    Loads and chunks a single document from a given file path.
-    This is a helper for the new upload endpoint.
-
-    Args:
-        filepath (str): Path to the single document file.
-
-    Returns:
-        List[Document]: List of loaded Langchain Document objects from the single file.
+    Tải và xử lý một tài liệu duy nhất, thêm PK duy nhất và các metadata khác.
     """
     documents: List[Document] = []
-    
-    # Get chunking parameters from environment variables
-    chunk_size = int(os.getenv('CHUNK_SIZE', 1000))
-    chunk_overlap = int(os.getenv('CHUNK_OVERLAP', 200))
-    text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    filename = os.path.basename(file_path)
+    file_extension = os.path.splitext(filename)[1].lower()
 
-    filename = os.path.basename(filepath)
-    print(f"Processing single file: {filename}")
-
-    if filename.endswith('.pdf'):
-        try:
-            page_contents = _extract_text_from_pdf_with_ocr(filepath)
-            for i, content in enumerate(page_contents):
-                if content.strip():
-                    docs_from_page = text_splitter.split_text(content)
-                    for chunk in docs_from_page:
-                        documents.append(Document(
-                            page_content=chunk, 
-                            metadata={
-                                'source': filename, 
-                                'content_type': 'application/pdf', 
-                                'page': i + 1, 
-                                'total_pages': len(page_contents)
-                            }
-                        ))
-        except Exception as e:
-            print(f"Error processing PDF {filename} with OCR: {e}. Falling back to PyPDFLoader.")
-            try:
-                loader = PyPDFLoader(filepath)
-                fdocs = [
-                    Document(page_content=doc.page_content, metadata={'source': filename, 'content_type': 'application/pdf', 'page': doc.metadata.get('page', 1), 'total_pages': doc.metadata.get('total_pages', 1)})
-                    for doc in loader.load_and_split(text_splitter=text_splitter)
-                ]
-                documents.extend(fdocs)
-            except Exception as e_fallback:
-                print(f"Failed to load PDF {filename} even with fallback: {e_fallback}. Skipping.")
-
-    elif filename.endswith('.md'):
-        loader = UnstructuredMarkdownLoader(filepath)
-        fdocs = [
-            Document(page_content=doc.page_content, metadata={'source': filename, 'content_type': 'text/markdown', 'page': doc.metadata.get('page', 1), 'total_pages': doc.metadata.get('total_pages', 1)})
-            for doc in loader.load_and_split(text_splitter=text_splitter)
+    if file_extension == '.pdf':
+        print(f"Đang xử lý tệp PDF: {filename}")
+        pages_content = _extract_text_from_pdf_with_ocr(file_path)
+        total_pages = len(pages_content)
+        for i, page_content in enumerate(pages_content):
+            # Chia nội dung PDF theo ký tự để đảm bảo các chunk dễ quản lý
+            splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            chunks = splitter.split_text(page_content)
+            for chunk_idx, chunk in enumerate(chunks):
+                doc_pk = str(uuid4()) # Tạo PK duy nhất cho mỗi chunk
+                documents.append(
+                    Document(
+                        page_content=chunk,
+                        metadata={
+                            'pk': doc_pk, # Khóa chính được tạo ở đây
+                            'source': filename,
+                            'content_type': 'application/pdf',
+                            'page': i + 1,
+                            'total_pages': total_pages
+                        }
+                    )
+                )
+    elif file_extension == '.md':
+        print(f"Đang xử lý tệp Markdown: {filename}")
+        # Sử dụng MarkdownHeaderTextSplitter cho markdown có cấu trúc
+        headers_to_split_on = [
+            ("#", "Header1"),
+            ("##", "Header2"),
+            ("###", "Header3"),
         ]
-        documents.extend(fdocs)
-    elif filename.endswith('.txt'):
-        with open(filepath, 'r', encoding='utf-8') as file:
-            content = file.read()
-        docs_from_txt = text_splitter.split_text(content)
-        for chunk in docs_from_txt:
-            documents.append(Document(page_content=chunk, metadata={'source': filename, 'content_type': 'text/plain', 'page': 1, 'total_pages': 1}))
+        markdown_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=headers_to_split_on
+        )
+        with open(file_path, 'r', encoding='utf-8') as f:
+            markdown_text = f.read()
+        md_docs = markdown_splitter.split_text(markdown_text)
+        for doc in md_docs:
+            doc_pk = str(uuid4()) # Tạo PK duy nhất cho mỗi chunk
+            # Đảm bảo metadata từ splitter được giữ lại, thêm PK
+            doc.metadata['pk'] = doc_pk # Khóa chính được tạo ở đây
+            doc.metadata['source'] = filename
+            doc.metadata['content_type'] = 'text/markdown'
+            documents.append(doc)
+
+    elif file_extension == '.json':
+        print(f"Đang xử lý tệp JSON: {filename}")
+        try:
+            loader = JSONLoader(file_path, jq_schema=".[]") # Điều chỉnh schema theo cấu trúc JSON của bạn
+            json_docs = loader.load_and_split(text_splitter=CharacterTextSplitter(chunk_size=1000, chunk_overlap=200))
+            for doc in json_docs:
+                doc_pk = str(uuid4()) # Tạo PK duy nhất cho mỗi chunk
+                doc.metadata['pk'] = doc_pk # Khóa chính được tạo ở đây
+                doc.metadata['source'] = filename
+                doc.metadata['content_type'] = 'application/json'
+                documents.append(doc)
+        except Exception as e:
+            print(f"Lỗi khi tải tệp JSON {filename}: {e}")
     else:
-        print(f"Unsupported file type: {filename}. Skipping.")
-            
+        print(f"Bỏ qua loại tệp không được hỗ trợ: {filename}")
+
     return documents
 
-# Main function just for testing document loading
-def main():
-    load_dotenv('./.env')
-    # Example of how to load documents
-    storage_path = os.getenv("SERVER_STORAGE_PATH", './storage')
-    if not os.path.exists(storage_path):
-        os.makedirs(storage_path)
-        print(f"Created storage directory: {storage_path}")
-    
-    documents = load_documents(storage_path)
-    print(f"Loaded {len(documents)} documents.")
-    for doc in documents[:5]: # Print first 5 documents for verification
-        print(f"--- Document ---")
-        print(f"Source: {doc.metadata.get('source')}, Page: {doc.metadata.get('page')}")
-        print(f"Content (first 200 chars): {doc.page_content[:200]}...")
-
-if __name__ == "__main__":
-    main()
-
+def move_file(source_path: str, destination_path: str):
+    """
+    Di chuyển một tệp từ source_path đến destination_path.
+    Tạo thư mục đích nếu nó không tồn tại.
+    """
+    os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+    try:
+        os.rename(source_path, destination_path)
+        print(f"Đã di chuyển tệp từ '{source_path}' đến '{destination_path}'")
+    except OSError as e:
+        print(f"Lỗi khi di chuyển tệp '{source_path}' đến '{destination_path}': {e}")
