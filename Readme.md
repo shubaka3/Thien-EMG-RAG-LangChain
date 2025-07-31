@@ -19,3 +19,29 @@ http://127.0.0.1:5000/apidocs/ để test api
 - Sửa lại hầu hết rất nhiều và đã test chạy tốt
 - test endpoint:  https://docs.google.com/spreadsheets/d/1ATC2GXBlrS709IgowpO4G2Ak4OyHodTBtWZvOWQs2QQ/edit?usp=sharing
 đa số là chạy tốt và sẽ cải thiện thêm 
+
+3:25PM - cập nhật agent,main
+để dùng biến môi trường mỗi request thay vì khởi động lần đầu
+
+OPENAI_API_KEY
+OPENAI_COMPLETION_MODEL
+SEARCH_K_VALUE
+MILVUS_API_BASE_URL
+MILVUS_API_KEY
+CHUNK_SIZE 
+CHUNK_OVERLAP
+SEARCH_K_VALUE
+TESSERACT_CMD_PATH
+
+
+cách chạy sau khi pull code về
+
+py -m venv venv
+
+venv\Scripts\activate
+
+pip install -r requirements.txt
+
+- 1 terminal python src/milvus_api_service.py
+
+- 1 terminal python -m src.main

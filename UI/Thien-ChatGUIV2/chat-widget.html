@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Widget</title>
+    <script src="config.js"></script>
+    <style>
+        :root {
+            --color-user: #d1ffd1;
+            --color-bot: #e8f4ff;
+            --color-system: #f0f0f0;
+            --radius: 16px;
+            --shadow: 0 2px 6px rgba(0,0,0,0.1);
+            --primary: #0091FC;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f1f3f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .chat-body {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100%;
+        }
+
+        header {
+            background: var(--primary);
+            color: #fff;
+            padding: 12px 20px;
+            text-align: center;
+            font-size: 1.2rem;
+            box-shadow: var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+        }
+
+        .lang-select {
+            position: relative;
+        }
+
+        .flag-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            object-fit: cover;
+        }
+
+        .flag-icon:hover {
+            transform: scale(1.1);
+        }
+
+        .dropdown-lang {
+            position: absolute;
+            bottom: 40px;
+            right: 0;
+            background: #fff;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 10px;
+            z-index: 1000;
+            max-width: 200px;
+        }
+
+        .flag-option {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: outline 0.2s ease;
+            object-fit: cover;
+        }
+
+        .flag-option:hover {
+            outline: 2px solid var(--primary);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #chat-box {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message-wrapper {
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message-wrapper.user {
+            justify-content: flex-end;
+        }
+
+        .message-wrapper.bot {
+            justify-content: flex-start;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin: 0 8px;
+        }
+
+        .message {
+            padding: 10px 16px;
+            border-radius: var(--radius);
+            max-width: 75%;
+            word-break: break-word;
+            line-height: 1.4;
+            font-size: 0.95rem;
+            box-shadow: var(--shadow);
+        }
+
+        .message.user {
+            background: var(--color-user);
+        }
+
+        .message.bot {
+            background: var(--color-bot);
+        }
+
+        .message.system {
+            background: var(--color-system);
+            align-self: center;
+            font-style: italic;
+            color: #666;
+        }
+
+        .code-block {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            margin: 8px 0;
+            position: relative;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+
+        .copy-btn:hover {
+            background: #0056b3;
+        }
+
+        .image-preview {
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 8px 0;
+        }
+
+        .pdf-preview {
+            width: 100%;
+            height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin: 8px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 0.85rem;
+        }
+
+        table th, table td {
+            border: 1px solid #ddd;
+            padding: 6px 8px;
+            text-align: left;
+        }
+
+        table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        #input-area {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            background: #fff;
+            border-top: 1px solid #ddd;
+            gap: 10px;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 10px 14px;
+            font-size: 1rem;
+            border: 1px solid #ccc;
+            border-radius: var(--radius);
+            outline: none;
+        }
+
+        #message-input:focus {
+            border-color: var(--primary);
+        }
+
+        #send-button {
+            padding: 10px 20px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        #send-button:hover {
+            background: #0079d3;
+        }
+
+        #send-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 10px;
+            font-style: italic;
+            color: #666;
+            text-align: center;
+        }
+
+        .typing-dots::after {
+            content: '...';
+            animation: typing 1.4s infinite;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% { opacity: 0; }
+            30% { opacity: 1; }
+        }
+
+        @media (max-width: 768px) {
+            .message {
+                max-width: 90%;
+                font-size: 0.9rem;
+            }
+
+            #send-button {
+                padding: 8px 14px;
+                font-size: 0.9rem;
+            }
+
+            #message-input {
+                font-size: 0.9rem;
+            }
+
+            .avatar {
+                width: 36px;
+                height: 36px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-body">
+        <header>
+            <div class="header-title">
+                <strong>AI Assistant</strong>
+            </div>
+            
+            <div class="lang-select">
+                <img src="https://flagcdn.com/w40/vn.png" id="current-flag" class="flag-icon" alt="Language" />
+                <div id="flag-dropdown" class="dropdown-lang hidden">
+                    <img src="https://flagcdn.com/w40/vn.png" class="flag-option" alt="Tiếng Việt" data-lang="Tiếng Việt" />
+                    <img src="https://flagcdn.com/w40/gb.png" class="flag-option" alt="English" data-lang="English" />
+                    <img src="https://flagcdn.com/w40/cn.png" class="flag-option" alt="中文" data-lang="中文" />
+                    <img src="https://flagcdn.com/w40/kr.png" class="flag-option" alt="한국어" data-lang="한국어" />
+                    <img src="https://flagcdn.com/w40/jp.png" class="flag-option" alt="日本語" data-lang="日本語" />
+                    <img src="https://flagcdn.com/w40/th.png" class="flag-option" alt="ไทย" data-lang="ไทย" />
+                    <img src="https://flagcdn.com/w40/in.png" class="flag-option" alt="हिन्दी" data-lang="हिन्दी" />
+                    <img src="https://flagcdn.com/w40/ru.png" class="flag-option" alt="Русский" data-lang="Русский" />
+                    <img src="https://flagcdn.com/w40/de.png" class="flag-option" alt="Deutsch" data-lang="Deutsch" />
+                    <img src="https://flagcdn.com/w40/fr.png" class="flag-option" alt="Français" data-lang="Français" />
+                </div>
+            </div>
+        </header>
+
+        <div id="chat-box">
+            <div class="message-wrapper bot">
+                <img src="https://digital.com.vn/wp-content/uploads/2025/03/ai-bot.jpg" alt="Bot" class="avatar">
+                <div class="message bot">
+                    Xin chào! Tôi là AI Assistant. Tôi có thể giúp gì cho bạn?
+                </div>
+            </div>
+        </div>
+
+        <div class="typing-indicator" id="typing-indicator">
+            <span class="typing-dots">AI đang trả lời</span>
+        </div>
+
+        <div id="input-area">
+            <input type="text" id="message-input" placeholder="Nhập tin nhắn..." />
+            <button id="send-button">Gửi</button>
+        </div>
+    </div>
+
+    <script>
+        class ChatWidget {
+            constructor() {
+                this.config = window.APP_CONFIG || {};
+                this.currentLanguage = "Tiếng Việt";
+                this.init();
+            }
+
+            init() {
+                this.bindEvents();
+                this.setupLanguageSelector();
+            }
+
+            bindEvents() {
+                const sendButton = document.getElementById('send-button');
+                const messageInput = document.getElementById('message-input');
+
+                sendButton.addEventListener('click', () => this.sendMessage());
+                messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') this.sendMessage();
+                });
+            }
+
+            setupLanguageSelector() {
+                const dropdown = document.getElementById("flag-dropdown");
+                const currentFlag = document.getElementById("current-flag");
+
+                currentFlag.addEventListener("click", () => {
+                    dropdown.classList.toggle("hidden");
+                });
+
+                document.querySelectorAll(".flag-option").forEach(img => {
+                    img.addEventListener("click", () => {
+                        const selectedLang = img.getAttribute("data-lang");
+                        this.currentLanguage = selectedLang;
+                        currentFlag.src = img.src;
+                        dropdown.classList.add("hidden");
+                    });
+                });
+
+                window.addEventListener("click", (e) => {
+                    if (!e.target.closest('.lang-select')) {
+                        dropdown.classList.add("hidden");
+                    }
+                });
+            }
+
+            async sendMessage() {
+                const input = document.getElementById('message-input');
+                const message = input.value.trim();
+                
+                if (!message) return;
+
+                // Disable input while processing
+                input.disabled = true;
+                document.getElementById('send-button').disabled = true;
+
+                // Add user message
+                this.appendMessage(message, 'user');
+                input.value = '';
+
+                // Show typing indicator
+                this.showTyping(true);
+
+                try {
+                    console.log('Sending message:', message);
+                    
+                    const response = await fetch('http://127.0.0.1:3000/api/chat/completion', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            messages: [
+                                { role: 'user', content: message }
+                            ]
+                        })
+                    });
+
+                    console.log('Response status:', response.status);
+                    console.log('Response headers:', response.headers);
+
+                    this.showTyping(false);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    // Check if response is streaming
+                    const contentType = response.headers.get('content-type');
+                    console.log('Content type:', contentType);
+
+                    if (contentType && contentType.includes('text/event-stream')) {
+                        // Handle streaming response
+                        await this.handleStreamingResponse(response);
+                    } else {
+                        // Handle regular JSON response
+                        const data = await response.json();
+                        console.log('Response data:', data);
+                        
+                        let botMessage = '';
+                        if (data.choices && data.choices[0] && data.choices[0].message) {
+                            botMessage = data.choices[0].message.content;
+                        } else if (data.content) {
+                            botMessage = data.content;
+                        } else if (data.message) {
+                            botMessage = data.message;
+                        } else if (typeof data === 'string') {
+                            botMessage = data;
+                        } else {
+                            botMessage = 'Phản hồi từ AI: ' + JSON.stringify(data);
+                        }
+                        
+                        this.appendMessage(botMessage, 'bot');
+                    }
+
+                } catch (error) {
+                    this.showTyping(false);
+                    console.error('Error:', error);
+                    this.appendMessage(`Lỗi kết nối: ${error.message}`, 'system');
+                } finally {
+                    // Re-enable input
+                    input.disabled = false;
+                    document.getElementById('send-button').disabled = false;
+                    input.focus();
+                }
+            }
+
+            async handleStreamingResponse(response) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let botMessage = '';
+                let messageElement = null;
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        console.log('Received chunk:', chunk);
+                        
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6).trim();
+                                if (data === '[DONE]') continue;
+                                if (data === '') continue;
+                                
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    console.log('Parsed streaming data:', parsed);
+                                    
+                                    let content = '';
+                                    if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                                        content = parsed.choices[0].delta.content;
+                                    } else if (parsed.content) {
+                                        content = parsed.content;
+                                    } else if (parsed.delta && parsed.delta.content) {
+                                        content = parsed.delta.content;
+                                    }
+                                    
+                                    if (content) {
+                                        botMessage += content;
+                                        
+                                        if (!messageElement) {
+                                            messageElement = this.appendMessage('', 'bot', true);
+                                        }
+                                        
+                                        this.updateMessage(messageElement, botMessage);
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing streaming JSON:', e, 'Data:', data);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Streaming error:', error);
+                    if (!messageElement) {
+                        this.appendMessage('Lỗi trong quá trình nhận phản hồi từ AI.', 'system');
+                    }
+                }
+            }
+
+            appendMessage(text, type = "user", isStreaming = false) {
+                const chatBox = document.getElementById('chat-box');
+                const msgWrapper = document.createElement('div');
+                msgWrapper.className = `message-wrapper ${type}`;
+
+                const avatar = document.createElement('img');
+                avatar.className = 'avatar';
+                avatar.src = type === "bot" ? 
+                    (this.config.AVATAR_BOT_URL || "https://digital.com.vn/wp-content/uploads/2025/03/ai-bot.jpg") : 
+                    (this.config.AVATAR_USER_URL || "assets/images/profile/user-1.jpg");
+                avatar.alt = "avatar";
+
+                const msg = document.createElement('div');
+                msg.className = `message ${type}`;
+
+                if (type === "bot") {
+                    msgWrapper.appendChild(avatar);
+                    msgWrapper.appendChild(msg);
+                } else {
+                    msgWrapper.appendChild(msg);
+                    msgWrapper.appendChild(avatar);
+                }
+
+                chatBox.appendChild(msgWrapper);
+                
+                if (!isStreaming && text) {
+                    this.updateMessage(msgWrapper, text);
+                } else if (isStreaming) {
+                    msg.innerHTML = '<em>Đang nhận phản hồi...</em>';
+                }
+                
+                this.scrollToBottom();
+                return msgWrapper;
+            }
+
+            updateMessage(messageElement, content) {
+                const messageDiv = messageElement.querySelector('.message');
+                
+                if (!content) {
+                    messageDiv.innerHTML = '<em>Đang nhận phản hồi...</em>';
+                    return;
+                }
+
+                const processedContent = this.processContent(content);
+                messageDiv.innerHTML = processedContent;
+                this.scrollToBottom();
+            }
+
+            processContent(content) {
+                if (!content) return '';
+
+                let html = content;
+
+                // Simple markdown processing
+                html = html
+                    .replace(/\n/g, '<br>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    .replace(/```([\s\S]*?)```/g, (match, code) => {
+                        const escapedCode = this.escapeForJs(code.trim());
+                        return `
+                            <div class="code-block">
+                                <button class="copy-btn" onclick="copyToClipboard('${escapedCode}')">Copy</button>
+                                <pre><code>${this.escapeHtml(code.trim())}</code></pre>
+                            </div>
+                        `;
+                    })
+                    .replace(/^# (.*$)/gim, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gim, '<h4>$1</h4>')
+                    .replace(/^### (.*$)/gim, '<h5>$1</h5>');
+
+                // Process links
+                html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+
+                return html;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            escapeForJs(text) {
+                return text.replace(/\\/g, '\\\\')
+                          .replace(/'/g, "\\'")
+                          .replace(/"/g, '\\"')
+                          .replace(/\n/g, '\\n')
+                          .replace(/\r/g, '\\r')
+                          .replace(/\t/g, '\\t');
+            }
+
+            showTyping(show) {
+                const indicator = document.getElementById('typing-indicator');
+                indicator.style.display = show ? 'block' : 'none';
+                if (show) this.scrollToBottom();
+            }
+
+            scrollToBottom() {
+                const chatBox = document.getElementById('chat-box');
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+        }
+
+        // Global function for copy button
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    const btn = event.target;
+                    const originalText = btn.textContent;
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 2000);
+                } catch (err) {
+                    console.error('Fallback copy failed: ', err);
+                }
+                document.body.removeChild(textArea);
+            });
+        }
+
+        // Initialize widget when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatWidget();
+        });
+    </script>
+</body>
+</html>

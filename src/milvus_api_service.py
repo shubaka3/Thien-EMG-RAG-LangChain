@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import logging
 from flasgger import Swagger, swag_from
+from flask_cors import CORS # Thêm dòng này
 
 # Load environment variables from .env file
 load_dotenv('./.env')
@@ -18,6 +19,8 @@ from src.load_file import get_embedding_model # load_documents not used directly
 
 app = Flask(__name__)
 swagger = Swagger(app)
+
+CORS(app)  # Enable CORS for all routes
 
 # Initialize MilvusService and embedding model
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")

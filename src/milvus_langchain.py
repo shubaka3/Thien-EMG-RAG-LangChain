@@ -222,7 +222,7 @@ class MilvusService:
         try:
             vector_store = self._get_vectorstore(collection_name)
             docs = vector_store.similarity_search(query, k=k)
-            logging.info(f"Đã tìm thấy {len(docs)} tài liệu cho truy vấn trong collection '{collection_name}'.")
+            logging.info(f"Đã tìm thấy {len(docs)} tài liệu cho truy vấn trong collection '{collection_name}' với k = '{k}'." )
             return docs
         except Exception as e:
             logging.error(f"Lỗi khi tìm kiếm tài liệu trong collection '{collection_name}': {e}", exc_info=True)
