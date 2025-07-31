@@ -1,0 +1,42 @@
+# Server settings
+SERVER_PORT=3000
+SERVER_STORAGE_PATH="./storage" # Thư mục chứa tài liệu của bạn
+
+# Embedding model settings
+SERVER_EMBEDDING_PROVIDER="openai" # 'openai' or 'ollama'
+OPENAI_EMBEDDING_MODEL="text-embedding-3-large"
+# Kích thước vector cho mô hình nhúng của bạn (ví dụ: text-embedding-3-large là 1536)
+# Đảm bảo giá trị này khớp với mô hình bạn đang sử dụng
+VECTOR_DIMENSION=1536 
+
+# OpenAI LLM settings
+OPENAI_API_KEY='sk-proj-0rH7KbpfyAkxIOnXbgBT3BlbkFJv8zvjcqGizoDf0En7cJO59aO2E1nOzUC_Wn2oQ1K6SoI9V-Sk0OdvCa49TA7re3IT88y3Eam4A'
+OPENAI_COMPLETION_MODEL="gpt-4o-mini"
+
+# Milvus settings
+MILVUS_URL="http://localhost:19530"
+MILVUS_COLLECTION="test_data2"
+MILVUS_API_PORT=5000 # Cổng cho dịch vụ Milvus API (milvus_api_service.py)
+MILVUS_API_BASE_URL="http://127.0.0.1:5000/milvus" # URL cơ sở của dịch vụ Milvus API
+
+# API Key for Milvus API Service (IMPORTANT: Change this to a strong, secret key in production)
+MILVUS_API_KEY="EMG" 
+
+# LangChain settings (nếu bạn sử dụng Langsmith)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+LANGCHAIN_API_KEY="lsv2_sk_b6b1920f4c9140688304ac0_23b89ae335"
+LANGCHAIN_PROJECT="default"
+
+# OCR settings
+# Đường dẫn đến tesseract executable. Bỏ trống nếu tesseract có trong PATH.
+# Ví dụ cho Windows: TESSERACT_CMD_PATH="C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+# Ví dụ cho Linux/macOS nếu không trong PATH: TESSERACT_CMD_PATH="/usr/local/bin/tesseract"
+TESSERACT_CMD_PATH="" 
+
+# Document splitting settings
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=200
+
+# Search settings
+SEARCH_K_VALUE=4 # Số lượng tài liệu tương tự hàng đầu để trả về khi tìm kiếm
