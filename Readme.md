@@ -45,3 +45,5 @@ pip install -r requirements.txt
 - 1 terminal python src/milvus_api_service.py
 
 - 1 terminal python -m src.main
+9:31PM - Cập nhật luồng hoạt động của agent
+https://docs.google.com/document/d/18zocGeH3WWpNeQrncDu62j3tS8svWEaOa7zPIlclBHw/edit?usp=sharing
