@@ -1,7 +1,7 @@
 # milvus_api_service.py
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 import logging
 from flasgger import Swagger, swag_from
@@ -17,7 +17,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 from src.milvus_langchain import MilvusService
 from src.load_file import get_embedding_model # load_documents not used directly
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    static_folder="../UI/Thien-ChatGUIV2",
+    template_folder="../UI/Thien-ChatGUIV2"
+)
+
 swagger = Swagger(app)
 
 CORS(app)  # Enable CORS for all routes
@@ -485,6 +490,10 @@ def search_milvus_documents_by_metadata():
     json_docs = [{'page_content': d.page_content, 'metadata': d.metadata} for d in docs]
     return jsonify({'status': 'success', 'documents': json_docs})
 
+@app.route('/')
+def serve_ui():
+    return render_template('index.html')
+    
 if __name__ == '__main__':
     milvus_api_port = int(os.getenv("MILVUS_API_PORT", 5000))
-    app.run(threaded=True, port=milvus_api_port, host='127.0.0.1')
+    app.run(threaded=True, port=milvus_api_port, host='0.0.0.0')
