@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv('./.env')
 
 DB_CONFIG = {
-    "host": os.getenv("PG_HOST", "172.16.1.69"),
+    "host": os.getenv("PG_HOST", "113.161.92.38"),
     "port": os.getenv("PG_PORT", 5432),
     "dbname": os.getenv("PG_DATABASE", "chatbot_db"),
     "user": os.getenv("PG_USER", "chatbot_usr"),
