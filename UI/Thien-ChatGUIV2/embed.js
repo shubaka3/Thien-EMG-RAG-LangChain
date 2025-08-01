@@ -1,7 +1,7 @@
 (function() {
     // Load config if available
     const config = window.APP_CONFIG || {
-        CHAT_IFRAME_URL: 'http://14.225.215.151:5500/chat-widget.html',
+        CHAT_IFRAME_URL: 'http://14.225.215.151:5000/chat-widget.html',
         PRIMARY_COLOR: '#0091FC'
     };
 
