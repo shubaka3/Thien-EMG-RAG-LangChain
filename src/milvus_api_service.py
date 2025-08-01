@@ -19,8 +19,8 @@ from src.load_file import get_embedding_model # load_documents not used directly
 
 app = Flask(
     __name__,
-    static_folder="../UI/Thien-ChatGUIV2",
-    template_folder="../UI/Thien-ChatGUIV2"
+    # static_folder="../UI/Thien-ChatGUIV2",
+    template_folder="/UI/Thien-ChatGUIV2"
 )
 
 swagger = Swagger(app)
@@ -494,6 +494,12 @@ def search_milvus_documents_by_metadata():
 def serve_ui():
     return render_template('index.html')
     
+# thêm path file name để truy cập cùng câp với UI 
+@app.route('/<path:filename>')
+def serve_static_files(filename):
+    return send_from_directory(app.template_folder, filename)
+
+
 if __name__ == '__main__':
     milvus_api_port = int(os.getenv("MILVUS_API_PORT", 5000))
     app.run(threaded=True, port=milvus_api_port, host='0.0.0.0')

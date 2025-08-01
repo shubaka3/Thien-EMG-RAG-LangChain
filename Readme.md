@@ -42,6 +42,7 @@ venv\Scripts\activate
 
 pip install -r requirements.txt
 
-- 1 terminal python src/milvus_api_service.py
+- 1 terminal python src/milvus_api_service.py trên win or
+    python3 -m src.milvus_api_service unbutu
 
 - 1 terminal python -m src.main
