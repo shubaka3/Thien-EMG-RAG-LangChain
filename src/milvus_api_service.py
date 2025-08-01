@@ -505,4 +505,4 @@ def serve_static_files(filename):
 
 if __name__ == '__main__':
     milvus_api_port = int(os.getenv("MILVUS_API_PORT", 5000))
-    app.run(threaded=True, port=milvus_api_port, host='0.0.0.0')
+    app.run(threaded=True, port=milvus_api_port, host='127.0.0.1')

@@ -182,6 +182,8 @@ Trả lời: """
         logging.info("📝 Ghi log vào cơ sở dữ liệu sau khi stream xong...")
         try:
             log_to_db(question, full_answer, search_result)
+            logging.info(f"Data log {question} - {full_answer[:50]} - {search_result}... đã được ghi vào cơ sở dữ liệu.")
+
         except Exception as e:
             print(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
             logging.warning(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
