@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 import os
 from src.milvus_langchain import MilvusService # Import the new MilvusService
 from src.db_logger import log_to_db
+import logging
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 load_dotenv('./.env')
 
@@ -121,12 +123,12 @@ def invoke_agent(question: str) -> dict:
     
     answer_text = result.content
     print("📝 Ghi log vào cơ sở dữ liệu...")
-    logger.info("📝 Ghi log vào cơ sở dữ liệu...")
+    logging.info("📝 Ghi log vào cơ sở dữ liệu...")
     try:
         log_to_db(question, answer_text, search_result)
     except Exception as e:
         print(f"[⚠️ DB ERROR] Không thể ghi log: {e}")
-        logger.info(f"⚠️ DB ERROR] Không thể ghi log: {e}")
+        logging.info(f"⚠️ DB ERROR] Không thể ghi log: {e}")
 
     return {
         'answer': result.content,
@@ -135,6 +137,7 @@ def invoke_agent(question: str) -> dict:
 def stream_agent_response(question: str):
     """
     Yields response tokens for streaming.
+    After streaming completes, logs the full answer to database.
 
     Args:
         question (str): The user's question.
@@ -142,7 +145,6 @@ def stream_agent_response(question: str):
     Yields:
         str: Parts of the answer.
     """
-    # Read OPENAI_API_KEY and OPENAI_COMPLETION_MODEL dynamically here
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY not found in environment variables")
@@ -158,16 +160,28 @@ Dựa trên ngữ cảnh trên, hãy trả lời câu hỏi một cách tốt nh
 Câu hỏi: {question}
 
 Trả lời: """
+
     print(f"Searching for information related to the question: {question}")
     search_result = search_document(question)
-    result_context = ''
-    if search_result:
-        result_context = make_search_result_context(search_result)
-    else:
-        result_context = "Không tìm thấy thông tin liên quan."
+    result_context = make_search_result_context(search_result) if search_result else "Không tìm thấy thông tin liên quan."
 
-    print(f"Streaming search result to LLM")
+    print("Streaming search result to LLM")
     chat_prompt = ChatPromptTemplate([('human', prompt)])
-    # Streaming response from LLM
-    for chunk in llm.stream(chat_prompt.invoke({'context': result_context, 'question': question})):
-        yield chunk.content
+    
+    # Tích lũy kết quả để log sau
+    full_answer = ""
+
+    try:
+        for chunk in llm.stream(chat_prompt.invoke({'context': result_context, 'question': question})):
+            content = chunk.content or ""
+            full_answer += content
+            yield content  # Stream từng phần ra ngoài
+    finally:
+        # Sau khi stream xong thì log lại
+        print("📝 Ghi log vào cơ sở dữ liệu sau khi stream xong...")
+        logging.info("📝 Ghi log vào cơ sở dữ liệu sau khi stream xong...")
+        try:
+            log_to_db(question, full_answer, search_result)
+        except Exception as e:
+            print(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
+            logging.warning(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
