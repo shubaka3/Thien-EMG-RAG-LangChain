@@ -1,12 +1,12 @@
 // config.js - Cấu hình toàn cục cho ứng dụng chat
 window.APP_CONFIG = {
     // API Endpoints
-    CHAT_API_URL: 'http://localhost:3030/api/chat/completion',
-    CONFIG_GET_URL: 'http://localhost:3030/api/config/get_dynamic_vars',
-    CONFIG_UPDATE_URL: 'http://localhost:3030/api/config/update',
+    CHAT_API_URL: 'http://14.225.215.151:3030/api/chat/completion',
+    CONFIG_GET_URL: 'http://14.225.215.151:3030/api/config/get_dynamic_vars',
+    CONFIG_UPDATE_URL: 'http://14.225.215.151:3030/api/config/update',
     
     // Widget Settings
-    CHAT_IFRAME_URL: 'http://localhost:5500/chat-widget.html',
+    CHAT_IFRAME_URL: 'http://14.225.215.151:5000/chat-widget.html',
     
     // Avatar URLs
     AVATAR_BOT_URL: 'https://gamelade.vn/wp-content/uploads/2025/01/01fc91d490ae80935063859b9f37783db7fc5892-1280x720_11zon.jpg',

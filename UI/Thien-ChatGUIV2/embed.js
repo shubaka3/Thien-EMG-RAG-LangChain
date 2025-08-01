@@ -1,7 +1,7 @@
 (function() {
     // Load config if available
     const config = window.APP_CONFIG || {
-        CHAT_IFRAME_URL: 'http://localhost:5500/chat-widget.html',
+        CHAT_IFRAME_URL: 'http://14.225.215.151:5500/chat-widget.html',
         PRIMARY_COLOR: '#0091FC'
     };
 
@@ -44,7 +44,7 @@
     // Create iframe for chat widget
     var chatIframe = document.createElement('iframe');
     chatIframe.id = 'myChatIframe';
-    chatIframe.src = config.CHAT_IFRAME_URL || 'http://localhost:5000/chat-widget.html';
+    chatIframe.src = config.CHAT_IFRAME_URL || 'http://14.225.215.151:5000/chat-widget.html';
     chatIframe.style.cssText = `
         position: fixed;
         bottom: 90px;
