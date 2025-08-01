@@ -40,7 +40,7 @@
     };
 
     document.body.appendChild(chatButton);
-
+// 
     // Create iframe for chat widget
     var chatIframe = document.createElement('iframe');
     chatIframe.id = 'myChatIframe';
