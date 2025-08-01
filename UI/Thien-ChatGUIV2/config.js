@@ -1,9 +1,9 @@
 // config.js - Cấu hình toàn cục cho ứng dụng chat
 window.APP_CONFIG = {
     // API Endpoints
-    CHAT_API_URL: 'http://127.0.0.1:3000/api/chat/completion',
-    CONFIG_GET_URL: 'http://127.0.0.1:3000/api/config/get_dynamic_vars',
-    CONFIG_UPDATE_URL: 'http://127.0.0.1:3000/api/config/update',
+    CHAT_API_URL: 'http://localhost:3030/api/chat/completion',
+    CONFIG_GET_URL: 'http://localhost:3030/api/config/get_dynamic_vars',
+    CONFIG_UPDATE_URL: 'http://localhost:3030/api/config/update',
     
     // Widget Settings
     CHAT_IFRAME_URL: 'http://localhost:5500/chat-widget.html',

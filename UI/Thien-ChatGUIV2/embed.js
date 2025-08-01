@@ -44,7 +44,7 @@
     // Create iframe for chat widget
     var chatIframe = document.createElement('iframe');
     chatIframe.id = 'myChatIframe';
-    chatIframe.src = config.CHAT_IFRAME_URL || 'http://localhost:5500/chat-widget.html';
+    chatIframe.src = config.CHAT_IFRAME_URL || 'http://localhost:5000/chat-widget.html';
     chatIframe.style.cssText = `
         position: fixed;
         bottom: 90px;

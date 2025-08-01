@@ -414,7 +414,7 @@
                 try {
                     console.log('Sending message:', message);
                     
-                    const response = await fetch('http://127.0.0.1:3000/api/chat/completion', {
+                    const response = await fetch('http://localhost:3030/api/chat/completion', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
