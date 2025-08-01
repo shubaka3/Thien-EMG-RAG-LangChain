@@ -1,0 +1,15 @@
+CREATE TABLE ai_response (
+    id SERIAL PRIMARY KEY,
+    question TEXT NOT NULL,
+    metadata JSONB,
+    ai_answer TEXT,
+    answertime TIMESTAMP,
+    create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE rag_progress (
+    id SERIAL PRIMARY KEY,
+    question_id INTEGER REFERENCES ai_response(id) ON DELETE CASCADE,
+    ann_return TEXT,
+    metadataa JSONB
+);

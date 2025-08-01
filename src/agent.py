@@ -8,6 +8,8 @@ from langchain_core.documents import Document
 from dotenv import load_dotenv
 import os
 from src.milvus_langchain import MilvusService # Import the new MilvusService
+from src.db_logger import log_to_db
+
 
 load_dotenv('./.env')
 
@@ -116,6 +118,14 @@ def invoke_agent(question: str) -> dict:
 
     print(f"Sending search result to LLM")
     result = llm.invoke(ChatPromptTemplate([('human', prompt)]).invoke({'context': result_context, 'question': question}))
+    
+    answer_text = result.content
+    print("📝 Ghi log vào cơ sở dữ liệu...")
+    try:
+        log_to_db(question, answer_text, search_result)
+    except Exception as e:
+        print(f"[⚠️ DB ERROR] Không thể ghi log: {e}")
+
     return {
         'answer': result.content,
     }
