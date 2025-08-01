@@ -1,5 +1,5 @@
 # Server settings
-SERVER_PORT=3000
+SERVER_PORT=3030
 SERVER_STORAGE_PATH="./storage" # Thư mục chứa tài liệu của bạn
 
 # Embedding model settings
@@ -10,7 +10,7 @@ OPENAI_EMBEDDING_MODEL="text-embedding-3-large"
 VECTOR_DIMENSION=1536 
 
 # OpenAI LLM settings
-OPENAI_API_KEY='sk-proj-0rH7KbpfyAkxIOnzvjcqGizoDf0En7cJO59aO2E1nOzUC_Wn2oQ1K6SoI9V-Sk0OdvCa49TA7re3IT88y3Eam4A'
+OPENAI_API_KEY='sk-proj-0rH7KbpfyAkxIOnXbgTsbiGS54gpZtTiB_MX1m6WGu1zUC_Wn2oQ1K6SoI9V-Sk0OdvCa49TA7re3IT88y3Eam4A'
 OPENAI_COMPLETION_MODEL="gpt-4o-mini"
 
 # Milvus settings
@@ -25,7 +25,7 @@ MILVUS_API_KEY=""
 # LangChain settings (nếu bạn sử dụng Langsmith)
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
-LANGCHAIN_API_KEY="lsv2_sk_b6b192057d04ac0_23b89ae335"
+LANGCHAIN_API_KEY="lsv2_sk_b6b1920f4c91406b254957d04ac0_23b89ae335"
 LANGCHAIN_PROJECT="default"
 
 # OCR settings
@@ -39,4 +39,4 @@ CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
 # Search settings
-SEARCH_K_VALUE=4 # Số lượng tài liệu tương tự hàng đầu để trả về khi tìm kiếm
+SEARCH_K_VALUE='2'
