@@ -437,7 +437,7 @@
                 this.showTyping(true);
 
                 try {
-                    const response = await fetch('http://14.225.215.151:3030/api/chat/completion', {
+                    const response = await fetch('http://vmentor-service.emg.edu.vn/api/chat/completion', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -698,7 +698,7 @@
 
             async loadConfig() {
                 try {
-                    const response = await fetch('http://14.225.215.151:3030/api/config/get_dynamic_vars');
+                    const response = await fetch('http://vmentor-service.emg.edu.vn/api/config/get_dynamic_vars');
                     const config = await response.json();
                     this.currentConfig = config;
                     this.renderConfig(config);
@@ -743,7 +743,7 @@
                 }
 
                 try {
-                    const response = await fetch('http://14.225.215.151:3030/api/config/update', {
+                    const response = await fetch('http://vmentor-service.emg.edu.vn/api/config/update', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
