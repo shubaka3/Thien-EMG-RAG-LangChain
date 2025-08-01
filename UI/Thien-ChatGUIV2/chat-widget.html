@@ -420,6 +420,7 @@
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify({
+                            stream: true,
                             messages: [
                                 { role: 'user', content: message }
                             ]
