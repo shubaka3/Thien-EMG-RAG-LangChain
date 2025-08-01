@@ -46,3 +46,8 @@ pip install -r requirements.txt
     python3 -m src.milvus_api_service unbutu
 
 - 1 terminal python -m src.main
+<<<<<<< HEAD
+=======
+9:31PM - Cập nhật luồng hoạt động của agent
+https://docs.google.com/document/d/18zocGeH3WWpNeQrncDu62j3tS8svWEaOa7zPIlclBHw/edit?usp=sharing
+>>>>>>> f7254f77a1cb3da8901ba4d3169d71290c5abbf3
