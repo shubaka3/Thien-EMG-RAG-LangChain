@@ -20,7 +20,7 @@ from src.load_file import get_embedding_model # load_documents not used directly
 app = Flask(
     __name__,
     # static_folder="../UI/Thien-ChatGUIV2",
-    template_folder="/UI/Thien-ChatGUIV2"
+    template_folder="UI/Thien-ChatGUIV2"
 )
 
 swagger = Swagger(app)
