@@ -121,10 +121,12 @@ def invoke_agent(question: str) -> dict:
     
     answer_text = result.content
     print("📝 Ghi log vào cơ sở dữ liệu...")
+    logger.info("📝 Ghi log vào cơ sở dữ liệu...")
     try:
         log_to_db(question, answer_text, search_result)
     except Exception as e:
         print(f"[⚠️ DB ERROR] Không thể ghi log: {e}")
+        logger.info(f"⚠️ DB ERROR] Không thể ghi log: {e}")
 
     return {
         'answer': result.content,
