@@ -52,6 +52,11 @@ def get_embedding_model(provider:Literal['openai', 'ollama'], model:str, **kwarg
     return _EProviders[provider](model=model, **kwargs)
 
 def _extract_text_from_pdf_with_ocr(pdf_path: str) -> List[str]:
+    # [feauture] sửa chỗ này, pdf có 2 dạng pdf thuần và ảnh, phải có extract text từ pdf thuần, nếu không có thì mới dùng OCR
+    #  thêm logic check khoảng trống trong pdf để xem có ảnh trong đó không hoặc tài liệu quá ít so với số lượng trung bình
+    # sau đó dùng ocr cho các page đấy và cũng trả về, ocr thì phải ocr theo tọa độ để trả về đúng box của data
+    #  ưu tiên lưu full box hoặc box in box để giữ context
+    # Nên làm 1 API riêng để xử lý OCR, có thể dùng FastAPI hoặc Flask
     """
     Trích xuất văn bản từ PDF, sử dụng OCR nếu không thể trích xuất văn bản trực tiếp.
 
@@ -88,7 +93,7 @@ def process_single_document(file_path: str) -> List[Document]:
     documents: List[Document] = []
     filename = os.path.basename(file_path)
     file_extension = os.path.splitext(filename)[1].lower()
-
+    # [feauture] nên thêm hỗ trợ docx,image,txt,audio
     if file_extension == '.pdf':
         print(f"Đang xử lý tệp PDF: {filename}")
         pages_content = _extract_text_from_pdf_with_ocr(file_path)

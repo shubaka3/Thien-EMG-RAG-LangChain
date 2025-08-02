@@ -246,7 +246,7 @@ def update_source():
             move_file(file_path, os.path.join(PROCESSED_FILES_PATH, filename))
             skipped_count += 1
             continue
-
+        ##[Feauture] ở đây nên thêm logic if skipped_count == len(files_to_process) để trả về thông báo không có file mới nào cần xử lý
         try:
             # Process single document to get Langchain documents with PKs
             documents = process_single_document(file_path)

@@ -30,7 +30,7 @@ swagger = Swagger(app)
 
 CORS(app)  # Enable CORS for all routes
 
-# Initialize MilvusService and embedding model
+# Initialize MilvusService and embedding model - Singleton only create once when starting the service
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 embeddings = get_embedding_model(
     provider=os.getenv("SERVER_EMBEDDING_PROVIDER", "openai"),
