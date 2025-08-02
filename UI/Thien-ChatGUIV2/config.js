@@ -1,7 +1,7 @@
 // config.js - Cấu hình toàn cục cho ứng dụng chat
 window.APP_CONFIG = {
     // API Endpoints
-    CHAT_API_URL: 'https://vmentor-service.emg.edu.vn/api/chat/completion',
+    CHAT_API_URL: 'https://vmentor-service.emg.edu.vn/api/chat/completions',
     CONFIG_GET_URL: 'https://vmentor-service.emg.edu.vn/api/config/get_dynamic_vars',
     CONFIG_UPDATE_URL: 'https://vmentor-service.emg.edu.vn/api/config/update',
     
