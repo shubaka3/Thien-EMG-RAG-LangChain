@@ -102,7 +102,7 @@ def make_response_chunk(chunk: str) -> str:
         data['choices'][0]['delta']['content'] = chunk
     return json.dumps(data)
 
-@app.route('/api/chat/completion', methods=['POST'])
+@app.route('/api/chat/completions', methods=['POST'])
 def chat():
     """
     Handles chat requests, which can be streaming or non-streaming.
