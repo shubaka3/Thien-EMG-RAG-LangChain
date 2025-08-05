@@ -17,7 +17,7 @@ requests==2.32.3
 flasgger
 Flask-Cors
 
-psycopg2
+psycopg2-binary
 
 werkzeug
 PyJWT
