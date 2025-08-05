@@ -1,371 +1,34 @@
-# main.py
-import time
+# src/main.py
 import os
-import json
 import uuid
-from flask import Flask, request, jsonify, Response, stream_with_context
-from dotenv import load_dotenv, set_key, find_dotenv
-import requests # Add requests library to call API
 import logging
+from flask import Flask, request, jsonify, Response
 from werkzeug.utils import secure_filename
 from flasgger import Swagger, swag_from
-from flask_cors import CORS # Thêm dòng này
+from flask_cors import CORS
 
-# Load environment variables for the first time
+from dotenv import load_dotenv
 load_dotenv('./.env')
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-from src.agent import invoke_agent, stream_agent_response # agent.py still uses MilvusService directly
-from src.load_file import process_single_document, move_file, get_embedding_model # Import new helper functions and get_embedding_model
-from src.milvus_langchain import MilvusService # For direct interaction with Milvus
+# Import các thành phần từ các file khác
+from src.database import get_db, AIModel, Collection, AIResponse, RagProgress, create_tables, User, SessionLocal
+from src.agent import invoke_agent, stream_agent_response
+# THAY ĐỔI: Import hàm xử lý file đã được nâng cấp
+from src.load_file import process_and_embed_document
+from src.milvus_langchain import milvus_service
 
 app = Flask(__name__)
-swagger = Swagger(app) 
-# Initialize Swagger
+swagger = Swagger(app)
 CORS(app)
-# Configure file storage paths (these are read once at startup, changes require restart for paths to be re-evaluated)
+
+# Cấu hình các đường dẫn từ file .env
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", './uploads')
-PENDING_FILES_PATH = os.getenv("PENDING_FILES_PATH", './pending_files')
-PROCESSED_FILES_PATH = os.getenv("PROCESSED_FILES_PATH", './processed_storage')
-MILVUS_COLLECTION_NAME = os.getenv('MILVUS_COLLECTION', 'test_data2') # Default Milvus Collection name
 
-# Ensure directories exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PENDING_FILES_PATH, exist_ok=True)
-os.makedirs(PROCESSED_FILES_PATH, exist_ok=True)
-
-# Initialize MilvusService and embedding model
-# These variables are read once at startup for initialization.
-# Changes to them require re-initialization of these objects, hence a server restart.
-EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
-embeddings = get_embedding_model(
-    provider=os.getenv("SERVER_EMBEDDING_PROVIDER", "openai"),
-    model=EMBEDDING_MODEL
-)
-milvus_service = MilvusService(
-    uri=os.getenv('MILVUS_URL', 'http://localhost:19530'),
-    embedding_function=embeddings
-)
-
-# --- Helper function to make authenticated requests to Milvus API Service ---
-def _make_milvus_api_request(method: str, endpoint: str, json_data: dict = None, params: dict = None):
-    # Read MILVUS_API_BASE_URL and MILVUS_API_KEY dynamically here
-    MILVUS_API_BASE_URL_DYNAMIC = os.getenv("MILVUS_API_BASE_URL", "http://127.0.0.1:5000/milvus")
-    MILVUS_API_KEY_DYNAMIC = os.getenv("MILVUS_API_KEY")
-
-    headers = {}
-    if MILVUS_API_KEY_DYNAMIC: 
-        headers['X-API-Key'] = MILVUS_API_KEY_DYNAMIC
-    
-    url = f"{MILVUS_API_BASE_URL_DYNAMIC}{endpoint}"
-    
-    try:
-        if method.lower() == 'get':
-            response = requests.get(url, headers=headers, params=params)
-        elif method.lower() == 'post':
-            response = requests.post(url, headers=headers, json=json_data, params=params)
-        else:
-            raise ValueError(f"Unsupported HTTP method: {method}")
-        
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API at {url}: {e}")
-        # Re-raise or handle appropriately
-        raise
-
-def make_response_chunk(chunk: str) -> str:
-    """
-    Creates a response chunk in the format expected by OpenAI API.
-
-    Args:
-        chunk (str): The content of the chunk.
-
-    Returns:
-        str: The serialized JSON string.
-    """
-    data = {
-        'id': f"emgcmpl-{uuid.uuid4()}",
-        'created': int(time.time()),
-        'model': os.getenv("OPENAI_COMPLETION_MODEL", 'gpt-4o-mini'), # This is read dynamically in agent.py now
-        'choices': [{
-            'index': 0,
-            'logprobs': None,
-            'finish_reason': None,
-            'delta': {}
-        }],
-        'object': 'chat.completion.chunk',
-    }
-    if chunk is not None:
-        data['choices'][0]['delta']['content'] = chunk
-    return json.dumps(data)
-
-@app.route('/api/chat/completions', methods=['POST'])
-def chat():
-    """
-    Handles chat requests, which can be streaming or non-streaming.
-    """
-    data:dict = request.json
-    
-    if 'messages' not in data or not isinstance(data['messages'], list):
-        return jsonify({'error': 'Message is required'}), 400
-    question = data['messages'][0].get('content', '')
-    if not question:
-        return jsonify({'error': 'User question is required'}), 400
-
-    if data.get('stream', False):
-        @stream_with_context
-        def generate():
-            for chunk in stream_agent_response(question):
-                yield f"data: {make_response_chunk(chunk)}\n\n"
-            yield f"data: {make_response_chunk(None)}\n\n"
-            yield "data: [DONE]\n\n"
-        return Response(generate(), mimetype='text/event-stream')
-    else:
-        answer = invoke_agent(question)
-        return jsonify({
-            'sources': [], # Can add sources here if the agent returns them
-            'id': f'emgcmpl-{uuid.uuid4()}',
-            'object': 'chat.completion',
-            'created': int(time.time()),
-            'model': os.getenv("OPENAI_COMPLETION_MODEL", 'gpt-4o-mini'), # This is read dynamically in agent.py now
-            'choices': [{
-                'index': 0,
-                'message': {
-                    'role': 'assistant',
-                    'content': answer['answer']
-                },
-                'finish_reason': 'stop'
-            }],
-            'usage': {
-                'prompt_tokens': len(question.split()),
-                'completion_tokens': len(answer['answer'].split()),
-                'total_tokens': len(answer['answer'].split())
-            },
-        })
-
-@app.route('/api/sources', methods=['GET'])
-def sources():
-    """
-    Retrieves a list of document sources and their counts from the Milvus API Service.
-    This endpoint still uses the Milvus API Service.
-    """
-    try:
-        response_data = _make_milvus_api_request('get', '/data/show_all')
-        sources_data = response_data.get('source_counts', {})
-        return jsonify([{'source': source, 'split_count': count} for source, count in sources_data.items()])
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API for sources: {e}")
-        return jsonify({'error': f'Failed to fetch sources from Milvus API: {e}'}), 500
-
-@app.route('/api/upload_file', methods=['POST'])
+@app.route('/api/ai', methods=['POST'])
 @swag_from({
-    'tags': ['File Management'],
-    'consumes': ['multipart/form-data'],
-    'parameters': [
-        {
-            'name': 'file',
-            'in': 'formData',
-            'type': 'file',
-            'required': True,
-            'description': 'File to upload (PDF, Markdown, JSON).'
-        }
-    ],
-    'responses': {
-        200: {'description': 'File uploaded to pending directory for processing'},
-        400: {'description': 'No file part or disallowed file'},
-        500: {'description': 'Error saving file'}
-    }
-})
-def upload_file():
-    """
-    Uploads a file to the pending directory for later processing into Milvus.
-    """
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part in the request'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-
-    if file:
-        filename = secure_filename(file.filename)
-        pending_file_path = os.path.join(UPLOAD_FOLDER, filename) # Use UPLOAD_FOLDER for initial upload
-        processed_file_path = os.path.join(PROCESSED_FILES_PATH, filename)
-
-        # Check if a file with the same name already exists in pending or processed storage
-        if os.path.exists(pending_file_path):
-            return jsonify({'message': f'File {filename} already exists in pending directory. Skipping upload.'}), 200
-        if os.path.exists(processed_file_path):
-            return jsonify({'message': f'File {filename} already exists in processed storage. Skipping upload.'}), 200
-
-        try:
-            file.save(pending_file_path)
-            logging.info(f"File '{filename}' saved to '{UPLOAD_FOLDER}'.")
-            return jsonify({'message': f'File {filename} uploaded to pending directory for processing.'}), 200
-        except Exception as e:
-            logging.error(f"Error saving uploaded file '{filename}': {e}")
-            return jsonify({'error': f'Could not save file: {e}'}), 500
-
-@app.route('/api/sources/update', methods=['POST'])
-@swag_from({
-    'tags': ['Milvus Documents'],
-    'summary': 'Processes and indexes new documents from the pending directory into Milvus.',
-    'description': 'Scans the pending directory for new documents, checks if they already exist in Milvus, '
-                   'indexes new documents, and moves processed files to the storage directory. '
-                   'Only files not already in Milvus are inserted.',
-    'responses': {
-        200: {'description': 'Document processing started successfully'},
-        500: {'description': 'Error during document processing'}
-    }
-})
-def update_source():
-    """
-    Processes documents from the pending directory, indexes them into Milvus,
-    and moves them to the processed storage directory.
-    """
-    processed_count = 0
-    skipped_count = 0
-    failed_count = 0
-    
-    files_to_process = os.listdir(PENDING_FILES_PATH)
-    
-    if not files_to_process:
-        return jsonify({'message': 'No new files in pending directory to process.'}), 200
-
-    logging.info(f"Starting to process {len(files_to_process)} files from '{PENDING_FILES_PATH}'...")
-
-    for filename in files_to_process:
-        file_path = os.path.join(PENDING_FILES_PATH, filename)
-        
-        # Check if the file is already indexed in Milvus (by source name)
-        # We query MilvusService directly here, not via the API service
-        if milvus_service.get_document_count_by_source(MILVUS_COLLECTION_NAME, filename) > 0:
-            logging.info(f"File '{filename}' already exists in Milvus. Moving to processed storage.")
-            move_file(file_path, os.path.join(PROCESSED_FILES_PATH, filename))
-            skipped_count += 1
-            continue
-        ##[Feauture] ở đây nên thêm logic if skipped_count == len(files_to_process) để trả về thông báo không có file mới nào cần xử lý
-        try:
-            # Process single document to get Langchain documents with PKs
-            documents = process_single_document(file_path)
-            if documents:
-                # Add documents to Milvus directly via MilvusService
-                inserted_pks = milvus_service.add_documents(MILVUS_COLLECTION_NAME, documents)
-                if inserted_pks:
-                    logging.info(f"Successfully inserted {len(inserted_pks)} chunks for file '{filename}'.")
-                    # Move file to processed storage after successful insertion
-                    move_file(file_path, os.path.join(PROCESSED_FILES_PATH, filename))
-                    processed_count += 1
-                else:
-                    logging.error(f"Failed to insert documents for file '{filename}' into Milvus.")
-                    failed_count += 1
-            else:
-                logging.warning(f"No documents extracted from file '{filename}'. Skipping.")
-                failed_count += 1 # Count as failed if no documents were extracted
-                # Optionally, move such files to a 'failed' directory
-                
-        except Exception as e:
-            logging.error(f"Error processing file '{filename}': {e}", exc_info=True)
-            failed_count += 1
-            # Optionally, move failed files to a 'failed' directory for manual inspection
-
-    return jsonify({
-        'status': 'success',
-        'message': f'Document processing completed.',
-        'processed_files': processed_count,
-        'skipped_files': skipped_count,
-        'failed_files': failed_count
-    }), 200
-
-@app.route('/api/sources/delete_by_filename', methods=['POST'])
-def delete_source_by_filename():
-    """
-    Deletes documents associated with a specific filename (source) via the Milvus API Service.
-    """
-    data: dict = request.json
-    filename_to_delete = data.get('filename')
-
-    if not filename_to_delete:
-        return jsonify({'error': 'Filename is required to delete documents by source.'}), 400
-
-    try:
-        response_data = _make_milvus_api_request('post', '/documents/delete_by_source', json_data={'source': filename_to_delete})
-        
-        # After successful deletion from Milvus, delete the file from processed_storage
-        processed_file_path = os.path.join(PROCESSED_FILES_PATH, filename_to_delete)
-        if os.path.exists(processed_file_path):
-            os.remove(processed_file_path)
-            logging.info(f"Deleted file '{filename_to_delete}' from processed_storage.")
-        
-        return jsonify(response_data)
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API to delete by filename: {e}")
-        return jsonify({'status': 'error', 'message': f'Failed to delete documents by filename via Milvus API: {e}'}), 500
-
-# --- New Endpoints for Milvus Collection Management (via Milvus API Service) ---
-@app.route('/api/milvus/collections/list', methods=['GET'])
-def list_milvus_collections_api():
-    """
-    Lists all existing Milvus collections via the Milvus API Service.
-    """
-    try:
-        response_data = _make_milvus_api_request('get', '/collections/list')
-        return jsonify(response_data)
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API to list collections: {e}")
-        return jsonify({'error': f'Failed to list Milvus collections: {e}'}), 500
-
-@app.route('/api/milvus/collections/describe', methods=['GET'])
-def describe_milvus_collection_api():
-    """
-    Describes a specific Milvus collection via the Milvus API Service.
-    Requires 'collection_name' as a query parameter.
-    """
-    collection_name = request.args.get('collection_name')
-    if not collection_name:
-        return jsonify({'error': 'Collection name is required.'}), 400
-    try:
-        response_data = _make_milvus_api_request('get', '/collections/describe', params={'collection_name': collection_name})
-        return jsonify(response_data)
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API to describe collection '{collection_name}': {e}")
-        return jsonify({'error': f"Failed to describe collection '{collection_name}': {e}"}), 500
-
-@app.route('/api/milvus/collections/stats', methods=['GET'])
-@swag_from({
-    'tags': ['Milvus Collections'],
-    'parameters': [
-        {'name': 'collection_name', 'in': 'query', 'type': 'string', 'required': True, 'description': 'Name of the collection to get stats for'}
-    ],
-    'responses': {
-        200: {'description': 'Collection statistics returned'}
-    }
-})
-def get_milvus_collection_stats_api():
-    """
-    Gets statistics for a specific Milvus collection via the Milvus API Service.
-    Requires 'collection_name' as a query parameter.
-    """
-    collection_name = request.args.get('collection_name')
-    if not collection_name:
-        return jsonify({'error': 'Collection name is required.'}), 400
-    try:
-        response_data = _make_milvus_api_request('get', '/collections/stats', params={'collection_name': collection_name})
-        return jsonify(response_data)
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error calling Milvus API to get stats for collection '{collection_name}': {e}")
-        return jsonify({'error': f"Failed to get stats for collection '{collection_name}': {e}"}), 500
-
-# NEW: Endpoint to update configuration from .env
-@app.route('/api/config/update', methods=['POST'])
-@swag_from({
-    'tags': ['Configuration'],
-    'summary': 'Update configuration variables in the .env file',
-    'description': 'Allows dynamic updating of key-value pairs in the .env file. '
-                   'Note: Some changes (e.g., MILVUS_URL, EMBEDDING_MODEL) '
-                   'may require an application restart to take full effect.',
+    'tags': ['AI Models'],
     'parameters': [
         {
             'name': 'body',
@@ -373,142 +36,808 @@ def get_milvus_collection_stats_api():
             'required': True,
             'schema': {
                 'type': 'object',
-                'additionalProperties': {'type': 'string'},
-                'example': {
-                    "MILVUS_COLLECTION": "new_collection_name",
-                    "OPENAI_COMPLETION_MODEL": "gpt-3.5-turbo"
+                'properties': {
+                    'user_id': {'type': 'string', 'example': 'user123'},
+                    'name': {'type': 'string', 'example': 'My OpenAI AI'},
+                    'provider': {'type': 'string', 'enum': ['openai', 'gemini', 'ollama', 'custom'], 'example': 'openai'},
+                    'api_key': {'type': 'string', 'example': 'sk-YOUR_OPENAI_API_KEY'},
+                    'embedding_model_name': {'type': 'string', 'example': 'text-embedding-3-small'},
+                    'chat_model_name': {'type': 'string', 'example': 'gpt-3.5-turbo'},
+                    'embedding_dim': {'type': 'integer', 'example': 1536}
+                },
+                'required': ['user_id', 'name', 'provider', 'embedding_model_name', 'chat_model_name']
+            }
+        }
+    ],
+    'responses': {
+        201: {'description': 'AI Model created successfully'},
+        400: {'description': 'Missing required fields'},
+        409: {'description': 'AI Model with this name already exists for user'}
+    }
+})
+def create_ai():
+    data = request.json
+    user_id = data.get('user_id')
+    name = data.get('name')
+    provider = data.get('provider')
+    api_key = data.get('api_key') # Có thể là None nếu provider là ollama
+    embedding_model_name = data.get('embedding_model_name')
+    chat_model_name = data.get('chat_model_name')
+    embedding_dim = data.get('embedding_dim')
+
+    if not all([user_id, name, provider, embedding_model_name, chat_model_name, embedding_dim]):
+        return jsonify({'error': 'Missing required fields: user_id, name, provider, embedding_model_name, chat_model_name, embedding_dim'}), 400
+
+    if provider in ['openai', 'gemini'] and not api_key:
+        return jsonify({'error': f'API key is required for provider {provider}'}), 400
+
+
+    db = next(get_db())
+    try:
+        existing_ai = db.query(AIModel).filter_by(user_id=user_id, name=name).first()
+        if existing_ai:
+            return jsonify({'error': 'AI Model with this name already exists for user'}), 409
+
+        new_ai = AIModel(
+            user_id=user_id, name=name, provider=provider, api_key=api_key,
+            embedding_model_name=embedding_model_name,
+            chat_model_name=chat_model_name,
+            embedding_dim=embedding_dim
+        )
+        db.add(new_ai)
+        db.commit()
+        db.refresh(new_ai)
+        return jsonify({
+            'message': 'AI Model created successfully',
+            'ai_id': str(new_ai.id),
+            'name': new_ai.name
+        }), 201
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error creating AI model: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to create AI model'}), 500
+    finally:
+        db.close()
+
+
+@app.route('/api/ai/<uuid:ai_id>', methods=['PUT'])
+@swag_from({
+    'tags': ['AI Models'],
+    'parameters': [
+        {'name': 'ai_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'example': 'My Edited AI'},
+                    'provider': {'type': 'string', 'enum': ['openai', 'gemini', 'ollama', 'custom']},
+                    'api_key': {'type': 'string', 'example': 'sk-NEW_API_KEY'},
+                    'embedding_model_name': {'type': 'string', 'example': 'text-embedding-3-large'},
+                    'chat_model_name': {'type': 'string', 'example': 'gpt-4'},
+                    'embedding_dim': {'type': 'integer', 'example': 3072},
                 }
             }
         }
     ],
     'responses': {
-        200: {'description': 'Configuration updated'},
-        400: {'description': 'Invalid request data'},
-        500: {'description': 'Error updating .env file'}
+        200: {'description': 'AI Model updated successfully'},
+        400: {'description': 'Missing required fields'},
+        404: {'description': 'AI Model not found or not owned by user'},
+        409: {'description': 'Another AI Model with this name already exists for user'}
     }
 })
-def update_config():
+def edit_ai(ai_id):
     data = request.json
-    if not isinstance(data, dict):
-        return jsonify({'error': 'Request must be a JSON object containing configuration key-value pairs.'}), 400
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
 
-    dotenv_path = find_dotenv()
-    if not dotenv_path:
-        return jsonify({'error': 'Could not find .env file.'}), 500
+    db = next(get_db())
+    ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+    if not ai_info:
+        db.close()
+        return jsonify({'error': 'AI Model not found or not owned by user'}), 404
 
-    updated_keys = []
-    restart_required = False
-    
-    # Variables that require a restart if changed
-    # These are variables that are read once at application startup
-    # or affect fundamental aspects like server binding or core service initialization.
-    restart_sensitive_vars = [
-        "SERVER_PORT", # Flask app port binding
-        "VECTOR_DIMENSION", # Milvus collection schema (requires recreation)
-        "MILVUS_URL", # MilvusService initialization (requires re-instantiation)
-        "MILVUS_COLLECTION", # MilvusService initialization (default collection name)
-        "OPENAI_EMBEDDING_MODEL", # Embeddings model initialization (requires re-instantiation)
-        "SERVER_EMBEDDING_PROVIDER", # Embeddings model initialization
-        "MILVUS_API_PORT", # Milvus API service port binding
-        "LANGCHAIN_TRACING_V2", # LangChain global settings
-        "LANGCHAIN_ENDPOINT",
-        "LANGCHAIN_API_KEY",
-        "LANGCHAIN_PROJECT",
-        "UPLOAD_FOLDER", # Base paths for file storage
-        "PENDING_FILES_PATH",
-        "PROCESSED_FILES_PATH"
-    ]
+    # Check for name conflict
+    new_name = data.get('name')
+    if new_name and new_name != ai_info.name:
+        existing = db.query(AIModel).filter(AIModel.user_id == user_id, AIModel.name == new_name).first()
+        if existing:
+            db.close()
+            return jsonify({'error': 'Another AI Model with this name already exists for user'}), 409
 
-    for key, value in data.items():
-        # Convert boolean/integer values from string if necessary
-        # Note: os.getenv returns string, so we compare string to string
-        # For boolean values, ensure they are stored as "true" or "false"
-        if isinstance(value, bool):
-            value = str(value).lower()
-        elif isinstance(value, int):
-            value = str(value)
+    # Cập nhật các trường cho phép
+    updatable_fields = ['name', 'provider', 'api_key', 'embedding_model_name', 'chat_model_name', 'embedding_dim']
+    for field in updatable_fields:
+        if field in data:
+            setattr(ai_info, field, data[field])
 
-        # Check if the value actually changed
-        current_value = os.getenv(key)
-        if current_value != value:
-            set_key(dotenv_path, key, value)
-            os.environ[key] = value # Update os.environ directly for current process
-            updated_keys.append(key)
-            logging.info(f"Updated configuration: {key}={value}")
+    # Bắt buộc API key nếu đổi sang openai hoặc gemini mà không có key
+    if ai_info.provider in ['openai', 'gemini'] and not ai_info.api_key:
+        db.close()
+        return jsonify({'error': f'API key is required for provider {ai_info.provider}'}), 400
 
-            if key in restart_sensitive_vars:
-                restart_required = True
+    try:
+        db.commit()
+        db.refresh(ai_info)
+        return jsonify({'message': 'AI Model updated successfully'}), 200
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error updating AI model: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to update AI model'}), 500
+    finally:
+        db.close()
 
-    if updated_keys:
-        message = f"Configuration updated for keys: {', '.join(updated_keys)}."
-        if restart_required:
-            message += " Some changes may require an application restart to take full effect."
-        return jsonify({'status': 'success', 'message': message, 'updated_keys': updated_keys, 'restart_required': restart_required})
-    else:
-        return jsonify({'status': 'success', 'message': 'No configuration changed.', 'updated_keys': [], 'restart_required': False})
 
-@app.route('/api/config/get_dynamic_vars', methods=['GET'])
+@app.route('/api/ai/<uuid:ai_id>', methods=['GET'])
 @swag_from({
-    'tags': ['Configuration'],
-    'summary': 'Get current values of dynamically changeable configuration variables',
-    'description': 'Returns a JSON object containing the current values of configuration variables '
-                   'that can be updated via API without requiring a server restart.',
+    'tags': ['AI Models'],
+    'parameters': [
+        {'name': 'ai_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'AI Model details'}, 404: {'description': 'AI Model not found'}}
+})
+def get_ai(ai_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+    db.close()
+
+    if ai_info:
+        return jsonify({
+            'id': str(ai_info.id), 'name': ai_info.name, 'provider': ai_info.provider,
+            'embedding_model_name': ai_info.embedding_model_name,
+            'chat_model_name': ai_info.chat_model_name,
+            'embedding_dim': ai_info.embedding_dim,
+            'created_at': ai_info.created_at.isoformat()
+        }), 200
+    return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+
+@app.route('/api/ai/<uuid:ai_id>', methods=['DELETE'])
+@swag_from({
+    'tags': ['AI Models'],
+    'parameters': [
+        {'name': 'ai_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'AI Model deleted'}, 404: {'description': 'AI Model not found'}}
+})
+def delete_ai(ai_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        ai_to_delete = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+        if ai_to_delete:
+            db.delete(ai_to_delete)
+            db.commit()
+            return jsonify({'message': f'AI Model {ai_id} deleted successfully'}), 200
+        return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error deleting AI model {ai_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to delete AI model'}), 500
+    finally:
+        db.close()
+
+
+# --- Collection Endpoints ---
+
+@app.route('/api/collections', methods=['POST'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [{
+        'name': 'body', 'in': 'body', 'required': True,
+        'schema': {
+            'type': 'object',
+            'properties': {
+                'ai_id': {'type': 'string', 'format': 'uuid'},
+                'user_id': {'type': 'string'},
+                'name': {'type': 'string'}
+            },
+            'required': ['ai_id', 'user_id', 'name']
+        }
+    }],
+    'responses': {201: {'description': 'Collection created'}, 404: {'description': 'AI Model not found'}, 409: {'description': 'Collection name exists'}}
+})
+def create_collection():
+    data = request.json
+    ai_id = data.get('ai_id')
+    user_id = data.get('user_id')
+    name = data.get('name')
+
+    if not all([ai_id, user_id, name]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    db = next(get_db())
+    try:
+        ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+        if not ai_info:
+            return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+
+        existing_collection = db.query(Collection).filter_by(ai_id=ai_id, name=name).first()
+        if existing_collection:
+            return jsonify({'error': 'Collection with this name already exists for this AI'}), 409
+
+        milvus_collection_name = f"col_{str(ai_id).replace('-', '_')}_{str(uuid.uuid4()).replace('-', '_')[:8]}"
+        milvus_service.create_collection(milvus_collection_name, ai_info.embedding_dim)
+
+        new_collection = Collection(ai_id=ai_id, name=name, milvus_collection_name=milvus_collection_name)
+        db.add(new_collection)
+        db.commit()
+        db.refresh(new_collection)
+        return jsonify({
+            'message': 'Collection created successfully',
+            'collection_id': str(new_collection.id),
+            'name': new_collection.name,
+            'milvus_collection_name': new_collection.milvus_collection_name
+        }), 201
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error creating collection: {e}", exc_info=True)
+        # Cố gắng xóa collection trên milvus nếu đã tạo
+        if 'milvus_collection_name' in locals():
+            milvus_service.drop_collection(milvus_collection_name)
+        return jsonify({'error': 'Failed to create collection'}), 500
+    finally:
+        db.close()
+
+@app.route('/api/ai/<uuid:ai_id>/collections', methods=['GET'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [
+        {'name': 'ai_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True, 'description': 'ID of the AI Model.'},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True, 'description': 'ID of the user.'}
+    ],
     'responses': {
-        200: {
-            'description': 'Current dynamic configuration values',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'OPENAI_API_KEY': {'type': 'string'},
-                    'OPENAI_COMPLETION_MODEL': {'type': 'string'},
-                    'SEARCH_K_VALUE': {'type': 'integer'},
-                    'MILVUS_API_BASE_URL': {'type': 'string'},
-                    'MILVUS_API_KEY': {'type': 'string'},
-                    'CHUNK_SIZE': {'type': 'integer'},
-                    'CHUNK_OVERLAP': {'type': 'integer'},
-                    'TESSERACT_CMD_PATH': {'type': 'string'}
-                },
-                'example': {
-                    "OPENAI_API_KEY": "sk-proj-...",
-                    "OPENAI_COMPLETION_MODEL": "gpt-4o-mini",
-                    "SEARCH_K_VALUE": 4,
-                    "MILVUS_API_BASE_URL": "http://127.0.0.1:5000/milvus",
-                    "MILVUS_API_KEY": "your_milvus_api_secret_key",
-                    "CHUNK_SIZE": 1000,
-                    "CHUNK_OVERLAP": 200,
-                    "TESSERACT_CMD_PATH": ""
-                }
+        200: {'description': 'List of collections for the AI Model'},
+        404: {'description': 'AI Model not found or not owned by user'}
+    }
+})
+def list_collections_for_ai(ai_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+        if not ai_info:
+            return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+
+        collections = db.query(Collection).filter(Collection.ai_id == ai_id).all()
+        
+        collection_list = [{
+            'id': str(c.id),
+            'name': c.name,
+            'milvus_collection_name': c.milvus_collection_name,
+            'created_at': c.created_at.isoformat()
+        } for c in collections]
+
+        return jsonify({'collections': collection_list}), 200
+    finally:
+        db.close()
+
+@app.route('/api/collections/<uuid:collection_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [
+        {'name': 'collection_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'Collection details'}, 404: {'description': 'Collection not found'}}
+})
+def get_collection(collection_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        collection_info = db.query(Collection).join(AIModel).filter(
+            Collection.id == collection_id,
+            AIModel.user_id == user_id
+        ).first()
+
+        if collection_info:
+            return jsonify({
+                'id': str(collection_info.id), 'ai_id': str(collection_info.ai_id),
+                'name': collection_info.name,
+                'milvus_collection_name': collection_info.milvus_collection_name,
+                'created_at': collection_info.created_at.isoformat()
+            }), 200
+        return jsonify({'error': 'Collection not found or not owned by user'}), 404
+    finally:
+        db.close()
+
+@app.route('/api/collections/<uuid:collection_id>', methods=['DELETE'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [
+        {'name': 'collection_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'Collection deleted'}, 404: {'description': 'Collection not found'}}
+})
+def delete_collection(collection_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        collection_to_delete = db.query(Collection).join(AIModel).filter(
+            Collection.id == collection_id,
+            AIModel.user_id == user_id
+        ).first()
+
+        if collection_to_delete:
+            milvus_service.drop_collection(collection_to_delete.milvus_collection_name)
+            db.delete(collection_to_delete)
+            db.commit()
+            return jsonify({'message': f'Collection {collection_id} deleted successfully'}), 200
+        return jsonify({'error': 'Collection not found or not owned by user'}), 404
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error deleting collection {collection_id}: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to delete collection'}), 500
+    finally:
+        db.close()
+
+# --- Document & Chat Endpoints ---
+
+@app.route('/api/documents/upload', methods=['POST'])
+@swag_from({
+    'tags': ['Documents'],
+    'consumes': ['multipart/form-data'],
+    'parameters': [
+        {'name': 'file', 'in': 'formData', 'type': 'file', 'required': True, 'description': 'The document to upload (PDF, MD, JSON).'},
+        {'name': 'ai_id', 'in': 'formData', 'type': 'string', 'required': True},
+        {'name': 'collection_id', 'in': 'formData', 'type': 'string', 'required': True},
+        {'name': 'user_id', 'in': 'formData', 'type': 'string', 'required': True}
+    ],
+    'responses': {
+        200: {'description': 'Document processed and added to collection'},
+        400: {'description': 'Bad request (missing fields, invalid file type)'},
+        404: {'description': 'AI Model or Collection not found'},
+        500: {'description': 'Failed to process document'}
+    }
+})
+def upload_document():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in the request'}), 400
+
+    file = request.files['file']
+    ai_id = request.form.get('ai_id')
+    collection_id = request.form.get('collection_id')
+    user_id = request.form.get('user_id')
+
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not all([ai_id, collection_id, user_id]):
+        return jsonify({'error': 'Missing required fields: ai_id, collection_id, user_id'}), 400
+
+    db = next(get_db())
+    temp_filepath = None
+    try:
+        # Xác thực thông tin và quyền sở hữu
+        ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+        if not ai_info:
+            return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+        
+        collection_info = db.query(Collection).filter(Collection.id == collection_id, Collection.ai_id == ai_id).first()
+        if not collection_info:
+            return jsonify({'error': 'Collection not found or does not belong to the specified AI model'}), 404
+
+        filename = secure_filename(file.filename)
+        
+        # Lưu file vào một thư mục tạm thời để xử lý
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        temp_filepath = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4()}_{filename}")
+        file.save(temp_filepath)
+        logging.info(f"File saved temporarily to {temp_filepath}")
+
+        # Gọi hàm xử lý file (load, chunk, embed, insert to Milvus)
+        success = process_and_embed_document(
+            file_path=temp_filepath,
+            collection_info=collection_info,
+            ai_info=ai_info
+        )
+        
+        if success:
+            return jsonify({'message': f'Document "{filename}" processed and added to collection successfully'}), 200
+        else:
+            return jsonify({'error': f'Failed to process document "{filename}"'}), 500
+
+    except Exception as e:
+        logging.error(f"Error during document upload: {e}", exc_info=True)
+        return jsonify({'error': 'An internal server error occurred during file upload.'}), 500
+    finally:
+        # Dọn dẹp file tạm sau khi xử lý xong
+        if temp_filepath and os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+            logging.info(f"Temporary file {temp_filepath} removed.")
+        db.close()
+
+
+@app.route('/api/chat/completions', methods=['POST'])
+@swag_from({
+    'tags': ['Chat'],
+    'parameters': [{
+        'name': 'body', 'in': 'body', 'required': True,
+        'schema': {
+            'type': 'object',
+            'properties': {
+                'messages': {'type': 'array', 'items': {'type': 'object', 'properties': {'role': {'type': 'string'}, 'content': {'type': 'string'}}}},
+                'ai_id': {'type': 'string', 'format': 'uuid'},
+                'user_id': {'type': 'string'},
+                'collection_id': {'type': 'string', 'format': 'uuid'},
+                'stream': {'type': 'boolean', 'default': False}
+            },
+            'required': ['messages', 'ai_id', 'user_id', 'collection_id']
+        }
+    }],
+    'responses': {200: {'description': 'Chat completion successful'}, 500: {'description': 'Internal Server Error'}}
+})
+def chat():
+    data = request.json
+    messages = data.get('messages')
+    ai_id = data.get('ai_id')
+    user_id = data.get('user_id')
+    collection_id = data.get('collection_id')
+    stream = data.get('stream', False)
+
+    if not all([messages, ai_id, user_id, collection_id]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    db = next(get_db())
+    try:
+        ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+        collection_info = db.query(Collection).filter(Collection.id == collection_id, Collection.ai_id == ai_id).first()
+
+        if not ai_info:
+            return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+        if not collection_info:
+            return jsonify({'error': 'Collection not found or not owned by user'}), 404
+
+        question = messages[-1]['content'] if messages else ""
+        milvus_collection_name = collection_info.milvus_collection_name
+
+        if stream:
+            return Response(stream_agent_response(ai_info, question, milvus_collection_name), mimetype='text/event-stream')
+        else:
+            response_data = invoke_agent(ai_info, question, milvus_collection_name)
+            # Chuyển đổi Document objects thành dicts trước khi trả về JSON
+            if 'sources' in response_data and response_data['sources']:
+                 response_data['sources'] = [
+                    {'page_content': doc.page_content, 'metadata': doc.metadata}
+                    for doc in response_data['sources']
+                ]
+            return jsonify(response_data)
+
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during chat: {e}", exc_info=True)
+        return jsonify({'error': 'An unexpected error occurred during chat.'}), 500
+    finally:
+        db.close()
+
+# --- Quản lý nguồn dữ liệu trong Collection ---
+
+@app.route('/api/collections/<uuid:collection_id>/sources', methods=['GET'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [
+        {'name': 'collection_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'List of unique source filenames'}, 404: {'description': 'Collection not found'}}
+})
+def get_collection_sources(collection_id):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        collection_info = db.query(Collection).join(AIModel).filter(
+            Collection.id == collection_id,
+            AIModel.user_id == user_id
+        ).first()
+        if collection_info:
+            sources = milvus_service.get_all_sources_in_collection(collection_info.milvus_collection_name)
+            return jsonify({'sources': sources}), 200
+        return jsonify({'error': 'Collection not found or not owned by user'}), 404
+    finally:
+        db.close()
+
+@app.route('/api/collections/<uuid:collection_id>/sources/<path:source_filename>', methods=['DELETE'])
+@swag_from({
+    'tags': ['Collections'],
+    'parameters': [
+        {'name': 'collection_id', 'in': 'path', 'type': 'string', 'format': 'uuid', 'required': True},
+        {'name': 'source_filename', 'in': 'path', 'type': 'string', 'required': True},
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True}
+    ],
+    'responses': {200: {'description': 'Source documents deleted'}, 404: {'description': 'Collection or Source not found'}}
+})
+def delete_source_documents(collection_id, source_filename):
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+    try:
+        collection_info = db.query(Collection).join(AIModel).filter(
+            Collection.id == collection_id,
+            AIModel.user_id == user_id
+        ).first()
+        if not collection_info:
+            return jsonify({'error': 'Collection not found or not owned by user'}), 404
+        
+        deleted_count = milvus_service.delete_documents_by_source(collection_info.milvus_collection_name, source_filename)
+        
+        if deleted_count > 0:
+            return jsonify({'message': f'Deleted {deleted_count} documents for source {source_filename}'}), 200
+        else:
+            return jsonify({'message': f'No documents found for source {source_filename}'}), 404
+    except Exception as e:
+        logging.error(f"Error deleting source {source_filename}: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to delete source documents'}), 500
+    finally:
+        db.close()
+
+@app.route('/api/document-schema', methods=['GET'])
+def get_document_schema():
+    return {
+        "schema": {
+            "vector": "float[] (length = embedding_dim)",
+            "text": "string",
+            "metadata": {
+                "source": "string",
+                "page_number": "integer",
+                "chunk_index": "integer",
+                "created_at": "datetime"
+            }
+        },
+        "example": {
+            "vector": [0.123, 0.456, "..."],
+            "text": "This is an example chunk of text...",
+            "metadata": {
+                "source": "contract_v1.pdf",
+                "page_number": 10,
+                "chunk_index": 5,
+                "created_at": "2025-08-04T12:00:00Z"
             }
         }
     }
-})
-def get_dynamic_vars():
-    """
-    Returns the current values of configuration variables that can be changed dynamically.
-    """
-    dynamic_vars = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "OPENAI_COMPLETION_MODEL": os.getenv("OPENAI_COMPLETION_MODEL"),
-        "SEARCH_K_VALUE": int(os.getenv("SEARCH_K_VALUE", 4)),
-        "MILVUS_API_BASE_URL": os.getenv("MILVUS_API_BASE_URL"),
-        "MILVUS_API_KEY": os.getenv("MILVUS_API_KEY"),
-        "CHUNK_SIZE": int(os.getenv("CHUNK_SIZE", 1000)),
-        "CHUNK_OVERLAP": int(os.getenv("CHUNK_OVERLAP", 200)),
-        "TESSERACT_CMD_PATH": os.getenv("TESSERACT_CMD_PATH")
-    }
-    return jsonify(dynamic_vars)
-    
-if __name__ == '__main__':
-    # Ensure the default collection is created when the main application starts
-    # This is where the collection is created if it doesn't exist, with auto_id=False for PK
-    VECTOR_DIMENSION_ON_STARTUP = int(os.getenv('VECTOR_DIMENSION', 1536)) # Use a distinct variable for startup
-    MILVUS_COLLECTION_NAME_ON_STARTUP = os.getenv('MILVUS_COLLECTION', 'test_data2') # Use a distinct variable for startup
-    try:
-        milvus_service.create_collection(MILVUS_COLLECTION_NAME_ON_STARTUP, VECTOR_DIMENSION_ON_STARTUP, recreate=False)
-        logging.info(f"Milvus collection '{MILVUS_COLLECTION_NAME_ON_STARTUP}' ensured to exist.")
-    except Exception as e:
-        logging.error(f"Failed to ensure Milvus collection '{MILVUS_COLLECTION_NAME_ON_STARTUP}' exists: {e}")
-        # It's critical to exit or handle gracefully if the core service dependency fails at startup
-        exit(1)
 
-    app.run(debug=True, host='127.0.0.1', port=int(os.getenv('SERVER_PORT', 5001))) # Read SERVER_PORT dynamically here
+@app.route('/api/documents', methods=['GET'])
+@swag_from({
+    'tags': ['Documents'],
+    'parameters': [
+        {'name': 'user_id', 'in': 'query', 'type': 'string', 'required': True},
+        {'name': 'ai_id', 'in': 'query', 'type': 'string', 'format': 'uuid', 'required': False},
+        {'name': 'collection_id', 'in': 'query', 'type': 'string', 'format': 'uuid', 'required': False},
+        {'name': 'source_filename', 'in': 'query', 'type': 'string', 'required': False}
+    ],
+    'responses': {200: {'description': 'List of matching documents'}, 400: {'description': 'Invalid request'}}
+})
+def get_documents():
+    user_id = request.args.get('user_id')
+    ai_id = request.args.get('ai_id')
+    collection_id = request.args.get('collection_id')
+    source_filename = request.args.get('source_filename')
+
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    db = next(get_db())
+
+    try:
+        collections = []
+
+        collections = []
+
+        if collection_id:
+            collection = db.query(Collection).join(AIModel).filter(
+                Collection.id == collection_id,
+                AIModel.user_id == user_id
+            ).first()
+            if not collection:
+                return jsonify({'error': 'Collection not found or not owned by user'}), 404
+            collections.append(collection)
+
+        elif ai_id:
+            ai = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+            if not ai:
+                return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+            collections = ai.collections
+
+        else:
+            # Lấy tất cả collection thuộc user
+            collections = db.query(Collection).join(AIModel).filter(
+                AIModel.user_id == user_id
+            ).all()
+
+
+        all_chunks = []
+
+        for col in collections:
+            if source_filename:
+                chunks = milvus_service.get_chunks_by_source(col.milvus_collection_name, source_filename)
+            else:
+                chunks = milvus_service.get_all_chunks(col.milvus_collection_name)
+            all_chunks.extend(chunks)
+
+        return jsonify({'documents': all_chunks}), 200
+
+    except Exception as e:
+        logging.error(f"Error getting documents: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to get documents'}), 500
+    finally:
+        db.close()
+        
+
+@app.route('/api/users', methods=['GET'])
+def get_user():
+    user_id = request.args.get('user_id')
+    email = request.args.get('email')
+
+    if not user_id and not email:
+        return jsonify({"error": "Vui lòng cung cấp user_id hoặc email"}), 400
+
+    db = SessionLocal()
+    try:
+        query = db.query(User)
+        if user_id:
+            user = query.filter(User.id == user_id).first()
+        else:
+            user = query.filter(User.email == email).first()
+
+        if not user:
+            return jsonify({"error": "User không tồn tại"}), 404
+
+        return jsonify({
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "created_at": user.created_at.isoformat(),
+            "ai_models": [
+                {
+                    "id": str(ai.id),
+                    "name": ai.name,
+                    "provider": ai.provider,
+                    "embedding_model_name": ai.embedding_model_name,
+                    "chat_model_name": ai.chat_model_name,
+                    "embedding_dim": ai.embedding_dim
+                }
+                for ai in user.ai_models
+            ]
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+from werkzeug.security import generate_password_hash
+from sqlalchemy.exc import IntegrityError
+
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    full_name = data.get("full_name")
+
+    if not email or not password:
+        return jsonify({"error": "Email và password là bắt buộc"}), 400
+
+    db = SessionLocal()
+    try:
+        hashed_password = generate_password_hash(password)
+        new_user = User(
+            email=email,
+            password_hash=hashed_password,
+            full_name=full_name
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        return jsonify({
+            "id": str(new_user.id),
+            "email": new_user.email,
+            "full_name": new_user.full_name,
+            "created_at": new_user.created_at.isoformat()
+        }), 201
+
+    except IntegrityError:
+        db.rollback()
+        return jsonify({"error": "Email đã tồn tại"}), 409
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+
+from werkzeug.security import check_password_hash
+import jwt
+import datetime
+
+SECRET_KEY = os.getenv("SECRET_KEY", "EMG")
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return jsonify({"error": "Email và password là bắt buộc"}), 400
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not check_password_hash(user.password_hash, password):
+            return jsonify({"error": "Sai email hoặc mật khẩu"}), 401
+
+        # Tạo JWT token
+        token = jwt.encode({
+            "user_id": str(user.id),
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)
+        }, SECRET_KEY, algorithm="HS256")
+
+        return jsonify({
+            "access_token": token,
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "full_name": user.full_name
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+@app.route('/api/user-id', methods=['GET'])
+def get_user_id_from_email():
+    email = request.args.get('email')
+
+    if not email:
+        return jsonify({"error": "Email là bắt buộc"}), 400
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return jsonify({"error": "User không tồn tại"}), 404
+
+        return jsonify({"user_id": str(user.id)}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+from pymilvus import utility
+print(utility.list_collections())
+
+if __name__ == '__main__':
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    create_tables()
+    app.run(debug=True, host='0.0.0.0', port=3030)
+

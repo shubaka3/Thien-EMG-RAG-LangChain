@@ -1,157 +1,94 @@
-# agent.py
-from langchain.tools.retriever import create_retriever_tool
-from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import OpenAIEmbeddings
-from langchain_core.documents import Document
-from dotenv import load_dotenv
+# src/agent.py
 import os
-from src.milvus_langchain import MilvusService # Import the new MilvusService
-from src.db_logger import log_to_db
 import logging
+import uuid
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import Document
+from langchain.embeddings.base import Embeddings
+
+from src.milvus_langchain import milvus_service
+from src.database import get_db, log_to_db, AIModel
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+except ImportError:
+    ChatGoogleGenerativeAI = None
+    GoogleGenerativeAIEmbeddings = None
+    logging.warning("langchain_google_genai not installed. Gemini chat and embeddings will not be available.")
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-load_dotenv('./.env')
-
-# Initialize embedding function and MilvusService once (these still require restart if their config changes)
-# EMBEDDING_MODEL is read here, if it changes, the 'embeddings' object needs to be re-created, requiring a restart.
-EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
-embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-
-# MILVUS_URL is read here for MilvusService initialization, if it changes, 'milvus_service' needs to be re-created, requiring a restart.
-milvus_service = MilvusService(
-    uri=os.getenv('MILVUS_URL', 'http://localhost:19530'),
-    embedding_function=embeddings
-)
-
-# VECTOR_DIMENSION is used for collection creation, which is a startup task
-# Its change requires a restart if the collection needs to be recreated.
-VECTOR_DIMENSION = int(os.getenv('VECTOR_DIMENSION', 1536))
-
-def get_retriever(collection_name: str):
-    """
-    Creates a retriever from MilvusService.
-
-    Args:
-        collection_name (str): Name of the Milvus collection.
-
-    Returns:
-        object: A retriever object that can be used to search documents.
-    """
-    # Read SEARCH_K_VALUE dynamically here
-    SEARCH_K_VALUE = int(os.getenv('SEARCH_K_VALUE', 4))
-    
-    # Langchain Milvus vectorstore has an as_retriever method
-    vectorstore = milvus_service._get_vectorstore(collection_name)
-    return vectorstore.as_retriever(
-        search_type="similarity", 
-        search_kwargs={"k": SEARCH_K_VALUE}
-    )
-
-def search_document(query: str) -> list[Document]:
-    """
-    Searches for information in the provided document via Milvus.
-
-    Args:
-        query (str): The query string to search for.
-
-    Returns:
-        list[Document]: List of matching Langchain documents.
-    """
-    collection_name = os.getenv('MILVUS_COLLECTION', 'test_data2')
-    # Read SEARCH_K_VALUE dynamically here
-    SEARCH_K_VALUE = int(os.getenv('SEARCH_K_VALUE', 4))
-    results = milvus_service.search_documents(collection_name, query, k=SEARCH_K_VALUE)
-    
-    if not results:
-        return [] # Return empty list instead of string
-    
-    return results
-    
-
-def make_search_result_context(docs: list[Document]) -> str:
-    """
-    Creates a context string from a list of documents.
-
-    Args:
-        docs (list[Document]): List of Langchain Document objects.
-
-    Returns:
-        str: Context string concatenated from the content of the documents.
-    """
-    return "\n\n".join([doc.page_content for doc in docs])
-
-
-def invoke_agent(question: str) -> dict:
-    """
-    Invokes the agent to answer a question based on search context.
-
-    Args:
-        question (str): The user's question.
-
-    Returns:
-        dict: A dictionary containing the answer.
-    """
-    # Read OPENAI_API_KEY and OPENAI_COMPLETION_MODEL dynamically here
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not found in environment variables")
-    OPENAI_COMPLETION_MODEL = os.getenv("OPENAI_COMPLETION_MODEL", 'gpt-4o-mini')
-
-    llm = ChatOpenAI(temperature=0, model=OPENAI_COMPLETION_MODEL, api_key=OPENAI_API_KEY)
-    prompt = """{context}
-
-    ---
-
-    Dựa trên ngữ cảnh trên, hãy trả lời câu hỏi một cách tốt nhất có thể.
-
-    Câu hỏi: {question}
-
-    Trả lời: """
-    print(f"Searching for information related to the question: {question}")
-    search_result = search_document(question)
-    result_context = ''
-    if search_result:
-        result_context = make_search_result_context(search_result)
+def _get_chat_llm(ai_info: AIModel, stream: bool = False):
+    """Khởi tạo và trả về mô hình Chat LLM dựa trên AIModel."""
+    if ai_info.provider == "openai":
+        os.environ["OPENAI_API_KEY"] = ai_info.api_key
+        return ChatOpenAI(
+            temperature=0,
+            model=ai_info.chat_model_name, # Dùng chat_model_name từ database
+            api_key=ai_info.api_key,
+            streaming=stream
+        )
+    elif ai_info.provider == "gemini":
+        if not ChatGoogleGenerativeAI:
+            raise ImportError("langchain_google_genai not installed. Cannot use Gemini chat.")
+        if not ai_info.api_key: # Kiểm tra API key
+            raise ValueError("Google API key is required for Gemini provider.")
+        os.environ["GOOGLE_API_KEY"] = ai_info.api_key
+        return ChatGoogleGenerativeAI(
+            model=ai_info.chat_model_name, # Dùng chat_model_name từ database
+            temperature=0,
+            convert_system_message_to_human=True,
+            api_key=ai_info.api_key,
+            streaming=stream
+        )
     else:
-        result_context = "Không tìm thấy thông tin liên quan."
+        raise ValueError(f"Unsupported chat LLM provider: {ai_info.provider}")
 
-    print(f"Sending search result to LLM")
-    result = llm.invoke(ChatPromptTemplate([('human', prompt)]).invoke({'context': result_context, 'question': question}))
+
+def search_document(query: str, milvus_collection_name: str, ai_info: AIModel) -> list[Document]:
+    """
+    Tìm kiếm tài liệu trong Milvus collection.
+    Sử dụng thông tin mô hình embedding từ ai_info.
+    """
+    SEARCH_K_VALUE = int(os.getenv("SEARCH_K_VALUE", 4))
+
+    logging.info(f"Searching for documents in collection '{milvus_collection_name}' with query: {query}")
+    found_docs = milvus_service.search_documents(
+        collection_name=milvus_collection_name,
+        query=query,
+        k=SEARCH_K_VALUE,
+        embedding_model_provider=ai_info.provider,
+        embedding_model_name=ai_info.embedding_model_name, # Dùng embedding_model_name từ ai_info
+        api_key=ai_info.api_key,
+        embedding_dim=ai_info.embedding_dim
+    )
+    return found_docs
+
+
+def make_search_result_context(search_result: list[Document]) -> str:
+    """Tạo ngữ cảnh từ kết quả tìm kiếm."""
+    if not search_result:
+        return "Không tìm thấy thông tin liên quan trong các tài liệu."
     
-    answer_text = result.content
-    print("📝 Ghi log vào cơ sở dữ liệu...")
-    logging.info("📝 Ghi log vào cơ sở dữ liệu...")
+    context = ""
+    for i, doc in enumerate(search_result):
+        context += f"--- Nguồn {i+1} (trang {doc.metadata.get('page', 'N/A')}, file: {doc.metadata.get('source', 'N/A')}) ---\n"
+        context += doc.page_content + "\n\n"
+    return context
+
+
+def invoke_agent(ai_info: AIModel, question: str, milvus_collection_name: str) -> dict:
+    """
+    Kích hoạt tác nhân AI để trả lời câu hỏi.
+    Nhận đối tượng ai_info từ database.
+    """
+    db_session = next(get_db())
     try:
-        log_to_db(question, answer_text, search_result)
-    except Exception as e:
-        print(f"[⚠️ DB ERROR] Không thể ghi log: {e}")
-        logging.info(f"⚠️ DB ERROR] Không thể ghi log: {e}")
+        llm = _get_chat_llm(ai_info, stream=False)
 
-    return {
-        'answer': result.content,
-    }
-
-def stream_agent_response(question: str):
-    """
-    Yields response tokens for streaming.
-    After streaming completes, logs the full answer to database.
-
-    Args:
-        question (str): The user's question.
-
-    Yields:
-        str: Parts of the answer.
-    """
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not found in environment variables")
-    OPENAI_COMPLETION_MODEL = os.getenv("OPENAI_COMPLETION_MODEL", 'gpt-4o-mini')
-
-    llm = ChatOpenAI(temperature=0, model=OPENAI_COMPLETION_MODEL, api_key=OPENAI_API_KEY, stream=True)
-    prompt = """{context}
+        prompt = """{context}
 
 ---
 
@@ -161,29 +98,64 @@ Câu hỏi: {question}
 
 Trả lời: """
 
-    print(f"Searching for information related to the question: {question}")
-    search_result = search_document(question)
-    result_context = make_search_result_context(search_result) if search_result else "Không tìm thấy thông tin liên quan."
+        search_result = search_document(question, milvus_collection_name, ai_info)
+        result_context = make_search_result_context(search_result)
 
-    print("Streaming search result to LLM")
-    chat_prompt = ChatPromptTemplate([('human', prompt)])
-    
-    # Tích lũy kết quả để log sau
+        chat_prompt = ChatPromptTemplate([('human', prompt)])
+        chain = chat_prompt | llm
+
+        response_content = chain.invoke({'context': result_context, 'question': question}).content
+
+        # THAY ĐỔI: Sử dụng search_results thay vì sources
+        log_to_db(db_session, ai_id=ai_info.id, question=question, answer=response_content, search_results=search_result)
+
+        return {'answer': response_content, 'sources': search_result}
+    except Exception as e:
+        logging.error(f"Error invoking LLM for AI {ai_info.id}: {e}", exc_info=True)
+        raise
+    finally:
+        db_session.close()
+
+
+def stream_agent_response(ai_info: AIModel, question: str, milvus_collection_name: str):
+    db_session = next(get_db())
     full_answer = ""
+    search_result = []
 
     try:
+        llm = _get_chat_llm(ai_info, stream=True)
+
+        prompt = """{context}
+
+---
+
+Dựa trên ngữ cảnh trên, hãy trả lời câu hỏi một cách tốt nhất có thể.
+
+Câu hỏi: {question}
+
+Trả lời: """
+
+        search_result = search_document(question, milvus_collection_name, ai_info)
+        result_context = make_search_result_context(search_result)
+
+        chat_prompt = ChatPromptTemplate([('human', prompt)])
+
         for chunk in llm.stream(chat_prompt.invoke({'context': result_context, 'question': question})):
             content = chunk.content or ""
             full_answer += content
-            yield content  # Stream từng phần ra ngoài
-    finally:
-        # Sau khi stream xong thì log lại
-        print("📝 Ghi log vào cơ sở dữ liệu sau khi stream xong...")
-        logging.info("📝 Ghi log vào cơ sở dữ liệu sau khi stream xong...")
-        try:
-            log_to_db(question, full_answer, search_result)
-            logging.info(f"Data log {question} - {full_answer[:50]} - {search_result}... đã được ghi vào cơ sở dữ liệu.")
 
-        except Exception as e:
-            print(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
-            logging.warning(f"[⚠️ DB ERROR] Không thể ghi log sau stream: {e}")
+            # CHỈNH SỬA ĐỂ STREAM ĐÚNG CHUẨN SSE
+            yield f"data: {content}\n\n"
+
+        # Kết thúc
+        yield "data: [DONE]\n\n"
+
+    except Exception as e:
+        logging.error(f"Error streaming LLM response for AI {ai_info.id}: {e}", exc_info=True)
+        yield f"data: ERROR: {str(e)}\n\n"
+    finally:
+        try:
+            log_to_db(db_session, ai_id=ai_info.id, question=question, answer=full_answer, search_results=search_result)
+        except Exception as log_e:
+            logging.error(f"Error logging to DB after streaming: {log_e}", exc_info=True)
+        db_session.close()

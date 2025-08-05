@@ -42,9 +42,12 @@ venv\Scripts\activate
 
 pip install -r requirements.txt
 
-- 1 terminal python src/milvus_api_service.py trên win or
+- 1 terminal python -m src.milvus_api_service  trên win or
     python3 -m src.milvus_api_service unbutu
 
 - 1 terminal python -m src.main
 9:31PM - Cập nhật luồng hoạt động của agent
 https://docs.google.com/document/d/18zocGeH3WWpNeQrncDu62j3tS8svWEaOa7zPIlclBHw/edit?usp=sharing
+
+
+- text-embedding-3-large có hỗ trợ chọn dim còn các model nhỏ k suport, tryền dim vào sẽ bị lỗi
