@@ -92,11 +92,11 @@ def invoke_agent(ai_info: AIModel, question: str, milvus_collection_name: str) -
 
 ---
 
-Dựa trên ngữ cảnh trên, hãy trả lời câu hỏi một cách tốt nhất có thể.
+Based on the context above, please answer the following question as best as you can.
 
-Câu hỏi: {question}
+Question: {question}
 
-Trả lời: """
+Answer (in English): """
 
         search_result = search_document(question, milvus_collection_name, ai_info)
         result_context = make_search_result_context(search_result)
@@ -129,11 +129,12 @@ def stream_agent_response(ai_info: AIModel, question: str, milvus_collection_nam
 
 ---
 
-Dựa trên ngữ cảnh trên, hãy trả lời câu hỏi một cách tốt nhất có thể.
+Based on the context above, please answer the following question as best as you can.
 
-Câu hỏi: {question}
+Question: {question}
 
-Trả lời: """
+Answer (in English): """
+
 
         search_result = search_document(question, milvus_collection_name, ai_info)
         result_context = make_search_result_context(search_result)
