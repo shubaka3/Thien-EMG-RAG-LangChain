@@ -96,7 +96,7 @@ Based on the context above, please answer the following question as best as you 
 
 Question: {question}
 
-Answer (in English): """
+Answer (in English), short and to the point no long detail: """
 
         search_result = search_document(question, milvus_collection_name, ai_info)
         result_context = make_search_result_context(search_result)
