@@ -739,7 +739,9 @@ def get_user():
                     "provider": ai.provider,
                     "embedding_model_name": ai.embedding_model_name,
                     "chat_model_name": ai.chat_model_name,
-                    "embedding_dim": ai.embedding_dim
+                    "embedding_dim": ai.embedding_dim,
+                    "tool": ai.tool,
+                    "ai_domain": ai.ai_domain
                 }
                 for ai in user.ai_models
             ]
