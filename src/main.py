@@ -503,13 +503,28 @@ def chat():
     db = next(get_db())
     try:
         ai_info = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
-        collection_info = db.query(Collection).filter(Collection.id == collection_id, Collection.ai_id == ai_id).first()
+       
 
         if not ai_info:
             return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+
+
+        tool = ai_info.tool or "default"
+
+        # === Proxy Tools ===
+        if tool == "proxy-ai":
+            result, status = handle_proxy_ai(ai_info, messages)
+            return jsonify(result), status
+
+        elif tool == "proxy-n8n":
+            result, status = handle_proxy_n8n(ai_info, messages)
+            return jsonify(result), status
+
+        collection_info = db.query(Collection).filter(Collection.id == collection_id, Collection.ai_id == ai_id).first()
         if not collection_info:
             return jsonify({'error': 'Collection not found or not owned by user'}), 404
 
+        # === Default flow ===
         question = messages[-1]['content'] if messages else ""
         milvus_collection_name = collection_info.milvus_collection_name
 
@@ -833,8 +848,47 @@ def get_user_id_from_email():
     finally:
         db.close()
 
-from pymilvus import utility
-print(utility.list_collections())
+# from pymilvus import utility
+# print(utility.list_collections())
+def handle_proxy_ai(ai_info, messages):
+    import requests
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    try:
+        response = requests.post(
+            ai_info.ai_domain,
+            json={"messages": messages},
+            headers=headers,
+            timeout=20
+        )
+        response.raise_for_status()
+        return response.json(), 200
+    except requests.RequestException as e:
+        logging.error(f"[Proxy AI] Error: {e}", exc_info=True)
+        return {'error': 'Failed to connect to proxy AI'}, 502
+
+
+def handle_proxy_n8n(ai_info, messages):
+    import requests
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    try:
+        response = requests.post(
+            ai_info.ai_domain,
+            json={"messages": messages},
+            headers=headers,
+            timeout=20
+        )
+        response.raise_for_status()
+        return response.json(), 200
+    except requests.RequestException as e:
+        logging.error(f"[Proxy N8N] Error: {e}", exc_info=True)
+        return {'error': 'Failed to connect to proxy N8N'}, 502
+
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)

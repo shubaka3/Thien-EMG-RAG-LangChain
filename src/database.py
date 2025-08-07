@@ -29,6 +29,9 @@ class AIModel(Base):
     provider = Column(String, nullable=False) # 'openai', 'gemini', 'custom'
     api_key = Column(String, nullable=False)
     
+    tool = Column(String, nullable=True)  # NEW
+    ai_domain = Column(String, nullable=True)                # NEW
+
     # THAY ĐỔI: Tách biệt tên mô hình chat và embedding
     embedding_model_name = Column(String, nullable=False) # Tên mô hình dùng cho embedding (ví dụ: 'text-embedding-ada-002')
     chat_model_name = Column(String, nullable=False)      # Tên mô hình dùng cho chat (ví dụ: 'gpt-3.5-turbo')
@@ -39,6 +42,7 @@ class AIModel(Base):
     collections = relationship("Collection", back_populates="ai", cascade="all, delete-orphan", passive_deletes=True)
     responses = relationship("AIResponse", back_populates="ai", cascade="all, delete-orphan", passive_deletes=True)
     user = relationship("User", back_populates="ai_models")
+
 
 
 class Collection(Base):
