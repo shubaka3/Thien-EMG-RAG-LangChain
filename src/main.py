@@ -220,6 +220,25 @@ def get_ai(ai_id):
     ],
     'responses': {200: {'description': 'AI Model deleted'}, 404: {'description': 'AI Model not found'}}
 })
+# def delete_ai(ai_id):
+#     user_id = request.args.get('user_id')
+#     if not user_id:
+#         return jsonify({'error': 'Missing user_id parameter'}), 400
+
+#     db = next(get_db())
+#     try:
+#         ai_to_delete = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
+#         if ai_to_delete:
+#             db.delete(ai_to_delete)
+#             db.commit()
+#             return jsonify({'message': f'AI Model {ai_id} deleted successfully'}), 200
+#         return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+#     except Exception as e:
+#         db.rollback()
+#         logging.error(f"Error deleting AI model {ai_id}: {e}", exc_info=True)
+#         return jsonify({'error': 'Failed to delete AI model'}), 500
+#     finally:
+#         db.close()
 def delete_ai(ai_id):
     user_id = request.args.get('user_id')
     if not user_id:
@@ -228,18 +247,39 @@ def delete_ai(ai_id):
     db = next(get_db())
     try:
         ai_to_delete = db.query(AIModel).filter(AIModel.id == ai_id, AIModel.user_id == user_id).first()
-        if ai_to_delete:
-            db.delete(ai_to_delete)
-            db.commit()
-            return jsonify({'message': f'AI Model {ai_id} deleted successfully'}), 200
-        return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+        if not ai_to_delete:
+            return jsonify({'error': 'AI Model not found or not owned by user'}), 404
+
+        # Lấy tất cả các collections liên quan
+        collections = db.query(Collection).filter(Collection.ai_id == ai_id).all()
+
+        deleted_collections = []
+        for collection in collections:
+            try:
+                # Xóa trong Milvus (có thể thất bại nhưng không dừng hệ thống)
+                milvus_service.drop_collection(collection.milvus_collection_name)
+                deleted_collections.append(str(collection.id))
+            except Exception as milvus_err:
+                logging.warning(f"Failed to drop Milvus collection '{collection.milvus_collection_name}': {milvus_err}")
+
+            # Xóa trong database
+            db.delete(collection)
+
+        # Xóa AI model
+        db.delete(ai_to_delete)
+        db.commit()
+
+        return jsonify({
+            'message': f'AI Model {ai_id} and {len(deleted_collections)} collection(s) deleted successfully.',
+            'deleted_collections': deleted_collections
+        }), 200
+
     except Exception as e:
         db.rollback()
         logging.error(f"Error deleting AI model {ai_id}: {e}", exc_info=True)
-        return jsonify({'error': 'Failed to delete AI model'}), 500
+        return jsonify({'error': 'Failed to delete AI model and its collections'}), 500
     finally:
         db.close()
-
 
 # --- Collection Endpoints ---
 
