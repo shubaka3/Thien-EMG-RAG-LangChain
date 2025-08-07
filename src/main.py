@@ -118,6 +118,9 @@ def create_ai():
                     'embedding_model_name': {'type': 'string', 'example': 'text-embedding-3-large'},
                     'chat_model_name': {'type': 'string', 'example': 'gpt-4'},
                     'embedding_dim': {'type': 'integer', 'example': 3072},
+                    'tool': {'type': 'string', 'example': 'retrieval'},
+                    'ai_domain': {'type': 'string', 'example': 'legaltech'},
+
                 }
             }
         }
@@ -150,7 +153,7 @@ def edit_ai(ai_id):
             return jsonify({'error': 'Another AI Model with this name already exists for user'}), 409
 
     # Cập nhật các trường cho phép
-    updatable_fields = ['name', 'provider', 'api_key', 'embedding_model_name', 'chat_model_name', 'embedding_dim']
+    updatable_fields = ['name', 'provider', 'api_key', 'embedding_model_name', 'chat_model_name', 'embedding_dim', 'tool', 'ai_domain']
     for field in updatable_fields:
         if field in data:
             setattr(ai_info, field, data[field])
@@ -193,6 +196,8 @@ def get_ai(ai_id):
     if ai_info:
         return jsonify({
             'id': str(ai_info.id), 'name': ai_info.name, 'provider': ai_info.provider,
+            'tool':ai_info.tool,
+            'ai_domain': ai_info.ai_domain,
             'embedding_model_name': ai_info.embedding_model_name,
             'chat_model_name': ai_info.chat_model_name,
             'embedding_dim': ai_info.embedding_dim,
