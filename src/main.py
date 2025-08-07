@@ -43,7 +43,9 @@ UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", './uploads')
                     'api_key': {'type': 'string', 'example': 'sk-YOUR_OPENAI_API_KEY'},
                     'embedding_model_name': {'type': 'string', 'example': 'text-embedding-3-small'},
                     'chat_model_name': {'type': 'string', 'example': 'gpt-3.5-turbo'},
-                    'embedding_dim': {'type': 'integer', 'example': 1536}
+                    'embedding_dim': {'type': 'integer', 'example': 1536},
+                    'tool': {'type': 'string', 'example': 'proxy-n8n'},
+                    'ai_domain': {'type': 'string', 'example': 'https://your-proxy-endpoint.com'}
                 },
                 'required': ['user_id', 'name', 'provider', 'embedding_model_name', 'chat_model_name']
             }
@@ -64,6 +66,8 @@ def create_ai():
     embedding_model_name = data.get('embedding_model_name')
     chat_model_name = data.get('chat_model_name')
     embedding_dim = data.get('embedding_dim')
+    tool = data.get('tool')
+    ai_domain = data.get('ai_domain')
 
     if not all([user_id, name, provider, embedding_model_name, chat_model_name, embedding_dim]):
         return jsonify({'error': 'Missing required fields: user_id, name, provider, embedding_model_name, chat_model_name, embedding_dim'}), 400
@@ -80,6 +84,8 @@ def create_ai():
 
         new_ai = AIModel(
             user_id=user_id, name=name, provider=provider, api_key=api_key,
+            tool=tool,
+            ai_domain=ai_domain,
             embedding_model_name=embedding_model_name,
             chat_model_name=chat_model_name,
             embedding_dim=embedding_dim
